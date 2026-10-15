@@ -1,11 +1,11 @@
 const $ = id => document.getElementById(id);
-const labels = { idle: '空闲', reserved: '连接中', busy: '使用中', resetting: '准备中', unavailable: '异常', queued: '排队中', connecting: '连接中', streaming: '串流中' };
+const labels = { idle: '空闲', reserved: '连接中', busy: '使用中', resetting: '准备中', unavailable: '异常', queued: '排队中', connecting: '连接中', streaming: '串流中', stopped: '已停止', starting: '启动中', running: '运行中', stopping: '停止中', backoff: '等待重启', failed: '失败', unknown: '状态未知', unregistered: '未注册' };
 let token = '', state, timer, loading = false, mutating = false, generation = 0;
 const node = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; };
 const duration = time => { const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000)); return seconds < 60 ? `${seconds} 秒` : seconds < 3600 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds / 60) % 60} 分`; };
 function notice(text) { $('notice').textContent = text; $('notice').hidden = !text; }
 async function api(path, method = 'GET') {
-  const response = await fetch(`/admin/api${path}`, { method, headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(10000) });
+  const response = await fetch(`/admin/api${path}`, { method, headers: { Authorization: `Bearer ${token}` }, cache: 'no-store', signal: AbortSignal.timeout(method === 'GET' ? 10000 : 20000) });
   const result = await response.json();
   if (response.status === 401) { logout(); throw new Error('管理凭证无效，请重新连接。'); }
   if (!response.ok) throw new Error(result.error || '请求失败');
@@ -19,7 +19,13 @@ function confirmAction(text) {
 async function action(path, confirmation) {
   if (mutating) return;
   mutating = true;
-  try { if (confirmation && !await confirmAction(confirmation)) return; await api(path, 'POST'); notice('操作已完成'); await refresh(); }
+  try {
+    if (confirmation && !await confirmAction(confirmation)) return;
+    const result = await api(path, 'POST');
+    if (path.endsWith('/logs')) { $('logOutput').textContent = result.output || '暂无日志'; $('logDialog').showModal(); }
+    else notice('操作已完成');
+    await refresh();
+  }
   catch (error) { notice(error.message); }
   finally { mutating = false; }
 }
@@ -30,7 +36,7 @@ function status(row, value, extra) { const td = cell(row); td.append(node('span'
 function empty(body, columns, text) { if (!body.children.length) { const td = node('td', text, 'empty'); td.colSpan = columns; const row = node('tr'); row.append(td); body.append(row); } }
 function render() {
   const selected = $('poolFilter').value;
-  const pools = [...new Set([...state.instances, ...state.sessions].map(s => s.poolId))].sort();
+  const pools = [...new Set([...state.instances, ...state.sessions, ...(state.agents || []).flatMap(a => a.instances)].map(s => s.poolId))].sort();
   $('poolFilter').replaceChildren(new Option('全部内容池', ''), ...pools.map(pool => new Option(pool, pool)));
   $('poolFilter').value = pools.includes(selected) ? selected : '';
   const filter = item => !$('poolFilter').value || item.poolId === $('poolFilter').value;
@@ -45,6 +51,7 @@ function render() {
     cell(row).append(actions); instances.append(row);
   }
   empty(instances, 5, '暂无已注册实例。请启动 Unity sender 并连接到实例池。');
+  renderAgents(filter);
   const sessions = $('sessionRows'); sessions.replaceChildren();
   for (const s of state.sessions.filter(filter)) {
     const row = node('tr'); row.dataset.session = s.connectionId;
@@ -56,6 +63,27 @@ function render() {
   $('eventRows').replaceChildren(...state.events.map(event => { const li = node('li'); const time = node('time', new Date(event.at).toLocaleTimeString()); const detail = node('span', `${event.subject} · ${event.message}`); li.append(time, node('b', event.type), detail); return li; }));
   if (!state.events.length) $('eventRows').append(node('li', '暂无事件', 'muted'));
   $('updated').textContent = `更新于 ${new Date(state.at).toLocaleTimeString()}`;
+}
+function renderAgents(filter) {
+  $('agents').hidden = $('agentNav').hidden = !state.agentsEnabled;
+  if (!state.agentsEnabled) return;
+  $('agentCount').textContent = `${state.agents.filter(a => a.online).length} 台在线 / ${state.agents.length} 台已登记`;
+  const rows = $('agentRows'); rows.replaceChildren();
+  for (const agent of state.agents) for (const instance of agent.instances.filter(filter)) {
+    const row = node('tr'); row.dataset.process = instance.instanceId;
+    identity(row, instance.instanceId, `${agent.agentId} · ${agent.hostname} · ${instance.poolId}`);
+    status(row, agent.online ? instance.state : 'unknown', agent.online ? instance.lastError || instance.lastExit : `Agent 离线，上次报告 ${new Date(agent.lastSeen).toLocaleTimeString()}`);
+    const sender = state.instances.find(s => s.instanceId === instance.instanceId && s.poolId === instance.poolId);
+    status(row, sender?.state || 'unregistered', sender?.draining ? '已停止接单' : '');
+    cell(row, `${instance.pid || '—'} / ${instance.restarts || 0} 次`);
+    const actions = node('div', undefined, 'actions'), prefix = `/agents/${encodeURIComponent(agent.agentId)}/instances/${encodeURIComponent(instance.instanceId)}`;
+    const start = button('启动', `${prefix}/start`), stop = button('停止', `${prefix}/stop`, `停止 ${instance.instanceId}？当前会话会结束，Unity 进程将退出。`), restart = button('重启', `${prefix}/restart`, `重启 ${instance.instanceId}？当前会话会结束，Unity 进程将重新启动。`), logs = button('日志', `${prefix}/logs`);
+    start.disabled = !agent.online || ['running', 'starting', 'stopping'].includes(instance.state);
+    stop.disabled = !agent.online || ['stopped', 'stopping'].includes(instance.state);
+    restart.disabled = !agent.online || ['starting', 'stopping'].includes(instance.state); logs.disabled = !agent.online;
+    actions.append(start, stop, restart, logs); cell(row).append(actions); rows.append(row);
+  }
+  empty(rows, 5, '暂无进程管理 Agent。请在渲染机器上配置并启动 Agent。');
 }
 async function refresh() {
   if (!token || loading) return;

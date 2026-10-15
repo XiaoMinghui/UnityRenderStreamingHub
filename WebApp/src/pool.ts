@@ -78,8 +78,7 @@ export default class PoolSignaling {
     const sender = Array.from(this.senders.values()).find(s => s.instanceId === instanceId);
     if (!sender) return false;
     if (action === 'drain' || action === 'resume') {
-      sender.draining = action === 'drain';
-      if (sender.draining) this.drained.add(instanceId); else this.drained.delete(instanceId);
+      this.setDraining(instanceId, action === 'drain');
       this.record(action, instanceId, sender.draining ? 'Stopped accepting new sessions' : 'Accepting new sessions');
       this.schedule();
     } else if (action === 'reset') {
@@ -88,6 +87,15 @@ export default class PoolSignaling {
       this.record(action, instanceId, 'Preparation requested by administrator');
     } else return false;
     return true;
+  }
+
+  isDraining(instanceId: string): boolean { return this.drained.has(instanceId); }
+
+  setDraining(instanceId: string, draining: boolean): void {
+    if (draining) this.drained.add(instanceId); else this.drained.delete(instanceId);
+    const sender = Array.from(this.senders.values()).find(s => s.instanceId === instanceId);
+    if (sender) sender.draining = draining;
+    this.schedule();
   }
 
   endSession(connectionId: string): boolean {

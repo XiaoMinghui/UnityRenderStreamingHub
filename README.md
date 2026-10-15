@@ -6,6 +6,8 @@ See [Maintenance and shared package setup](MAINTENANCE.md) for setup and validat
 
 The optional [management dashboard](WebApp/ADMINISTRATION.md) shows instance status, sessions, queues and recent events, with authenticated controls for allocation and preparation.
 
+The optional [process Agent](Tools/ProcessAgent/README.md) manages configured Unity processes on rendering machines, including startup, stop/restart, bounded crash recovery and process logs through the dashboard.
+
 ## Requirements
 
 Please see [Requirements](com.unity.renderstreaming/Documentation~/index.md#requirements) section.

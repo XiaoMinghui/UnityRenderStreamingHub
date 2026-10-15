@@ -25,6 +25,7 @@ export class RenderStreaming {
           .option('-l, --logging <type>', 'Choose http logging type combined, dev, short, tiny or none.', process.env.LOGGING || 'dev')
           .option('--pool', 'Enable the additional /pool WebSocket endpoint.', false)
           .option('--admin', 'Enable the authenticated management API and dashboard.', false)
+          .option('--agents', 'Enable authenticated process agents on /agent (requires --admin --pool).', false)
           .parse(argv);
         const option = program.opts();
         return {
@@ -39,6 +40,8 @@ export class RenderStreaming {
           poolToken: process.env.RENDERSTREAMING_POOL_TOKEN,
           admin: option.admin,
           adminToken: process.env.RENDERSTREAMING_ADMIN_TOKEN,
+          agents: option.agents,
+          agentToken: process.env.RENDERSTREAMING_AGENT_TOKEN,
         };
       }
     };
@@ -90,8 +93,9 @@ export class RenderStreaming {
 
       //Start Websocket Signaling server
       const signaling = new WSSignaling(this.server, this.options.mode, 20000, 3,
-        options.pool ? { senderToken: options.poolToken } : undefined);
+        options.pool ? { senderToken: options.poolToken } : undefined, options.agents ? options.agentToken : undefined);
       this.app.locals.pool = signaling.pool;
+      this.app.locals.agents = signaling.agents;
     }
 
     console.log(`start as ${this.options.mode} mode`);

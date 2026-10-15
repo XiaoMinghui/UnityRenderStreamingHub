@@ -10,7 +10,7 @@
 <body>
   <aside>
     <a class="brand" href="./"><span class="brand-icon">RS</span><span>Render Streaming<small>管理中心</small></span></a>
-    <nav aria-label="管理导航"><a href="#overview">运行概览</a><a href="#instances">实例</a><a href="#sessions">会话与队列</a><a href="#events">近期事件</a></nav>
+    <nav aria-label="管理导航"><a href="#overview">运行概览</a><a href="#instances">实例</a><a id="agentNav" href="#agents" hidden>机器与进程</a><a href="#sessions">会话与队列</a><a href="#events">近期事件</a></nav>
     <div class="aside-note">UNITY RENDER STREAMING<br>实例池管理</div>
   </aside>
   <main>
@@ -24,11 +24,13 @@
       <section id="overview" class="metrics" aria-label="实例池概况"></section>
       <section id="instances" class="panel"><div class="section-heading"><div><h2>实例</h2><p>停止接单不影响当前会话；重新准备会结束当前会话。</p></div><label>内容池 <select id="poolFilter"><option value="">全部内容池</option></select></label></div><div class="table-scroll"><table><thead><tr><th>实例 / 内容池</th><th>状态</th><th>当前会话</th><th>在线时长</th><th>操作</th></tr></thead><tbody id="instanceRows"></tbody></table></div></section>
       <section id="sessions" class="panel"><div class="section-heading"><div><h2>会话与队列</h2><p>连接成功后，以接收端确认解码播放作为串流开始的标志。</p></div></div><div class="table-scroll"><table><thead><tr><th>会话 / 内容池</th><th>状态</th><th>分配实例</th><th>等待 / 使用时长</th><th>操作</th></tr></thead><tbody id="sessionRows"></tbody></table></div></section>
+      <section id="agents" class="panel" hidden><div class="section-heading"><div><h2>机器与进程</h2><p>进程运行后，仍需 Unity 注册并完成准备才能分配。停止或重启将结束当前会话。</p></div><span id="agentCount" class="muted"></span></div><div class="table-scroll"><table><thead><tr><th>机器 / 实例</th><th>进程状态</th><th>串流状态</th><th>PID / 自动重启</th><th>操作</th></tr></thead><tbody id="agentRows"></tbody></table></div></section>
       <section id="events" class="panel"><div class="section-heading"><div><h2>近期事件</h2><p>展示本次服务器运行期间最近的 100 条事件。</p></div><span id="updated" class="muted"></span></div><ul id="eventRows" class="event-list"></ul></section>
     </div>
     <footer>Unity Render Streaming · 管理操作只作用于实例池</footer>
   </main>
   <dialog id="confirmDialog"><form method="dialog"><h2>确认操作</h2><p id="confirmText"></p><div class="dialog-actions"><button value="cancel">取消</button><button class="danger" value="confirm">确认</button></div></form></dialog>
+  <dialog id="logDialog"><h2 id="logTitle">进程日志</h2><p>最近的标准输出与错误输出，最多 8 KB。完整日志保存在 Agent 所在机器。</p><pre id="logOutput"></pre><form method="dialog" class="dialog-actions"><button>关闭</button></form></dialog>
   <script type="module" src="main.js"></script>
 </body>
 </html>

@@ -14,6 +14,8 @@ export const createServer = (config: Options): express.Application => {
   const app: express.Application = express();
   if (config.admin && (!config.pool || !config.adminToken || config.adminToken === config.poolToken))
     throw new Error('Management requires the instance pool and a separate RENDERSTREAMING_ADMIN_TOKEN.');
+  if (config.agents && (!config.admin || !config.agentToken || [config.adminToken, config.poolToken].includes(config.agentToken)))
+    throw new Error('Process agents require management and a separate RENDERSTREAMING_AGENT_TOKEN.');
   resetHandler(config.mode);
   // logging http access
   if (config.logging != "none") {
@@ -23,7 +25,7 @@ export const createServer = (config: Options): express.Application => {
   app.use(cors({origin: '*'}));
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
-  if (config.admin) app.use('/admin/api', createAdminRouter(config.adminToken, () => app.locals.pool));
+  if (config.admin) app.use('/admin/api', createAdminRouter(config.adminToken, () => app.locals.pool, () => app.locals.agents));
   else app.use('/admin/api', (req, res) => res.status(404).json({ error: 'Management is disabled' }));
   app.use('/admin', (req, res, next) => {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");

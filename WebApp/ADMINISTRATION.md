@@ -24,6 +24,7 @@ Without `--admin`, management APIs return 404. Enabling management requires the 
 - Prepare again: end any current session and request a new application-owned reset. The sender must acknowledge the exact new reset ticket before becoming ready. This does not restart the Unity process.
 - Sessions and queue: inspect FIFO positions and waiting/use durations, remove a queued user or end a session. The supplied pool receiver stops and requires a manual rejoin after administrative termination. This is session termination, not an access ban; another receiver may request access again.
 - Recent events: the last 100 pool lifecycle and management events in memory. Credentials, lease/reset tickets, SDP and ICE are excluded. This is a bounded operational view, not a durable audit log.
+- Machines and processes: when `--agents` is enabled, inspect configured processes separately from ready senders and issue start/stop/restart/log-tail operations. See [process Agent setup and lifecycle](../Tools/ProcessAgent/README.md). An offline Agent's last process report is explicitly marked unknown; its already registered senders may still be online.
 
 The dashboard polls every three seconds. Failed refreshes show a disconnected state and retry; the last snapshot may be stale. Data, queue state and stop-accepting settings are not persisted across signaling-server restart. A running Unity process and a registered, ready sender are distinct states.
 
@@ -38,8 +39,14 @@ Requests require `Authorization: Bearer <administrator credential>`. Responses a
 | `POST /admin/api/instances/:id/resume` | Resume allocations |
 | `POST /admin/api/instances/:id/reset` | End the current lease and prepare again |
 | `POST /admin/api/sessions/:id/end` | End a lease or cancel a queue entry |
+| `POST /admin/api/agents/:agent/instances/:id/start` | Start an Agent-configured process |
+| `POST /admin/api/agents/:agent/instances/:id/stop` | End its session and stop the process tree |
+| `POST /admin/api/agents/:agent/instances/:id/restart` | End its session and restart the process tree |
+| `POST /admin/api/agents/:agent/instances/:id/logs` | Read a bounded, redacted process log tail |
 
 404 after a mutation can mean the instance/session disappeared between refresh and action. Unknown instance actions return 400. The snapshot identifies sessions by connection ID, not business user identity.
+
+Agent operations additionally require `--agents` and a third distinct `RENDERSTREAMING_AGENT_TOKEN` on the server. Disabled Agent operations return 404; offline, overlapping, timed-out or failed operations return 409. Recent events then combine pool and Agent lifecycle/command events, capped at 100 total entries. Executable paths and Agent credentials are never sent to the dashboard.
 
 ## Validation
 

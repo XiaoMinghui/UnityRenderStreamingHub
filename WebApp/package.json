@@ -12,7 +12,8 @@
     "pack": "pkg .",
     "test:receiver": "npm run build && node test/receiver.e2e.cjs",
     "test:pool": "npm run build && node test/pool.e2e.cjs",
-    "test:admin": "npm run build && node test/admin.e2e.cjs"
+    "test:admin": "npm run build && node test/admin.e2e.cjs",
+    "test:agent": "npm run build && node test/agent.e2e.cjs"
   },
   "dependencies": {
     "@types/express": "^4.17.13",

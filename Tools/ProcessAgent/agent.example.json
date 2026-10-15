@@ -1,0 +1,28 @@
+{
+  "agentId": "machine-01",
+  "serverUrl": "ws://127.0.0.1:8080/agent",
+  "signalingUrl": "ws://127.0.0.1:8080/pool",
+  "logDirectory": "logs",
+  "maxProcesses": 2,
+  "stopTimeoutMs": 5000,
+  "instances": [
+    {
+      "instanceId": "machine-01.sender-01",
+      "poolId": "default",
+      "executable": "D:/RenderStreamingBuilds/Sender/Sender.exe",
+      "args": ["-logFile", "-"],
+      "autoStart": true,
+      "autoRestart": true,
+      "maxRestarts": 5,
+      "restartDelayMs": 2000
+    },
+    {
+      "instanceId": "machine-01.sender-02",
+      "poolId": "default",
+      "executable": "D:/RenderStreamingBuilds/Sender/Sender.exe",
+      "args": ["-logFile", "-"],
+      "autoStart": true,
+      "autoRestart": true
+    }
+  ]
+}

@@ -41,8 +41,19 @@ namespace Unity.RenderStreaming
             if (manager == null || sender == null) throw new InvalidOperationException("Assign the sender's SignalingManager and Broadcast.");
             if (manager.Running) throw new InvalidOperationException("Disable SignalingManager Run On Awake; PoolSender must own its signaling lifecycle.");
             if (string.IsNullOrEmpty(processId)) processId = Guid.NewGuid().ToString("N");
-            var transport = new PoolSenderSignaling(signalingUrl,
-                string.IsNullOrEmpty(instanceId) ? processId : instanceId, poolId,
+            var endpoint = signalingUrl;
+            var identity = string.IsNullOrEmpty(instanceId) ? processId : instanceId;
+            var group = poolId;
+            // Only managed players opt into process-specific configuration. Serialized values stay unchanged.
+            if (Environment.GetEnvironmentVariable("RENDERSTREAMING_MANAGED") == "1")
+            {
+                endpoint = Environment.GetEnvironmentVariable("RENDERSTREAMING_SIGNALING_URL");
+                identity = Environment.GetEnvironmentVariable("RENDERSTREAMING_INSTANCE_ID");
+                group = Environment.GetEnvironmentVariable("RENDERSTREAMING_POOL_ID");
+                if (string.IsNullOrEmpty(endpoint) || string.IsNullOrEmpty(identity) || string.IsNullOrEmpty(group))
+                    throw new InvalidOperationException("Managed pool senders require signaling URL, instance ID and pool ID environment variables.");
+            }
+            var transport = new PoolSenderSignaling(endpoint, identity, group,
                 SenderToken ?? Environment.GetEnvironmentVariable("RENDERSTREAMING_POOL_TOKEN"), SynchronizationContext.Current);
             transport.ResetRequested += ticket => {
                 if (signaling != transport) return;

@@ -2,22 +2,27 @@ import * as websocket from "ws";
 import { Server } from 'http';
 import * as handler from "./class/websockethandler";
 import PoolSignaling, { PoolOptions } from './pool';
+import AgentHub from './agents';
 
 export default class WSSignaling {
   server: Server;
   wss: websocket.Server;
   private heartbeat: ReturnType<typeof setInterval>;
   readonly pool?: PoolSignaling;
+  readonly agents?: AgentHub;
   private upgrade: (...args: any[]) => void;
 
-  constructor(server: Server, mode: string, heartbeatInterval = 20000, maxMissedPongs = 3, poolOptions?: PoolOptions) {
+  constructor(server: Server, mode: string, heartbeatInterval = 20000, maxMissedPongs = 3, poolOptions?: PoolOptions, agentToken?: string) {
     this.server = server;
     // Keep the legacy upgrade listener exactly as before unless explicitly enabled.
     this.wss = new websocket.Server(poolOptions ? { noServer: true } : { server });
     if (poolOptions) {
       this.pool = new PoolSignaling(poolOptions);
+      if (agentToken) this.agents = new AgentHub(agentToken);
       this.upgrade = (request, socket, head) => {
-        const target = request.url?.split('?')[0] === '/pool' ? this.pool.wss : this.wss;
+        const pathname = request.url?.split('?')[0];
+        if (pathname === '/agent' && !this.agents) { socket.destroy(); return; }
+        const target = pathname === '/pool' ? this.pool.wss : pathname === '/agent' ? this.agents.wss : this.wss;
         target.handleUpgrade(request, socket, head, client => target.emit('connection', client, request));
       };
       server.on('upgrade', this.upgrade);
@@ -111,6 +116,7 @@ export default class WSSignaling {
   close(): void {
     if (this.upgrade) this.server.removeListener('upgrade', this.upgrade);
     this.pool?.close();
+    this.agents?.close();
     clearInterval(this.heartbeat);
     this.wss.clients.forEach(client => client.terminate());
     this.wss.close();

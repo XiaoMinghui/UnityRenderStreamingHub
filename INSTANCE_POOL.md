@@ -1,6 +1,6 @@
 # Unity Render Streaming instance pool
 
-The optional instance pool assigns each browser receiver to one ready Unity sender. Additional receivers wait in a FIFO queue for the requested pool. Start multiple sender processes manually, on one or several machines, and connect them to one signaling server.
+The optional instance pool assigns each browser receiver to one ready Unity sender. Additional receivers wait in a FIFO queue for the requested pool. Start multiple sender processes manually, or use the optional [process Agent](Tools/ProcessAgent/README.md) on one or several machines, and connect them to one signaling server.
 
 ## Compatibility
 
@@ -75,7 +75,7 @@ The server validates socket ownership and a random lease ID on media/disconnect 
 
 ## First version boundaries
 
-- Fixed, manually launched instances; no remote process execution, automatic scaling or GPU scheduling.
+- Fixed instances, launched manually or through the separately enabled process Agent. The pool does not automatically scale instances or schedule GPU capacity. Agent commands are restricted to locally configured executables.
 - Queues and leases are in memory on one server process. Server restart clears them; senders re-register and receivers retry. No cross-server coordination or durable queue.
 - A signaling disconnect ends that lease. A reconnect or page refresh joins the queue again; there is no sticky session or preserved queue position across socket loss. Waiting in a background tab retains the live socket and queue position. Returning to an active stream follows the existing fresh-media recovery policy.
 - The existing native Unity receiver continues using its legacy workflow. This first pool receiver is the browser page.

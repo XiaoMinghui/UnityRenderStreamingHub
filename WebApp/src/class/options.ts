@@ -10,4 +10,6 @@ export default interface Options {
   poolToken?: string;
   admin?: boolean;
   adminToken?: string;
+  agents?: boolean;
+  agentToken?: string;
 }

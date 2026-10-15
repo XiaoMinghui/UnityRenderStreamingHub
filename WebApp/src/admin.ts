@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import PoolSignaling from './pool';
+import type AgentHub from './agents';
 
 export function tokenMatches(provided: string, expected: string): boolean {
   if (!provided || provided.length > 4096 || !expected) return false;
@@ -8,7 +9,7 @@ export function tokenMatches(provided: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function createAdminRouter(token: string, getPool: () => PoolSignaling): Router {
+export function createAdminRouter(token: string, getPool: () => PoolSignaling, getAgents: () => AgentHub = () => undefined): Router {
   const router = Router();
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -24,7 +25,29 @@ export function createAdminRouter(token: string, getPool: () => PoolSignaling): 
     if (!getPool()) { res.status(503).json({ error: 'Instance pool is not ready' }); return; }
     next();
   });
-  router.get('/state', (req, res) => res.json(getPool().snapshot()));
+  router.get('/state', (req, res) => {
+    const pool = getPool().snapshot(), agents = getAgents();
+    res.json({ ...pool, agentsEnabled: !!agents, agents: agents?.snapshot() || [],
+      events: [...pool.events, ...(agents?.recentEvents() || [])].sort((a, b) => b.at - a.at).slice(0, 100) });
+  });
+  router.post('/agents/:agent/instances/:id/:action', async (req, res) => {
+    const agents = getAgents();
+    if (!agents) { res.status(404).json({ error: 'Process agents are disabled' }); return; }
+    const { agent, id, action } = req.params;
+    if (!['start', 'stop', 'restart', 'logs'].includes(action)) { res.status(400).json({ error: 'Unknown process action' }); return; }
+    if (!agents.owns(agent, id)) { res.status(404).json({ error: 'Unknown managed instance' }); return; }
+    const pool = getPool(), wasDraining = pool.isDraining(id);
+    try {
+      const result = await agents.command(agent, id, action, () => {
+        if (action !== 'stop' && action !== 'restart') return;
+        pool.setDraining(id, true);
+        const current = pool.snapshot().instances.find(s => s.instanceId === id);
+        if (current?.connectionId) pool.endSession(current.connectionId);
+      });
+      if (action === 'start' || (action === 'restart' && !wasDraining)) pool.setDraining(id, false);
+      res.json(result);
+    } catch (error) { res.status(409).json({ error: (error as Error).message }); }
+  });
   router.post('/instances/:id/:action', (req, res) => {
     if (!['drain', 'resume', 'reset'].includes(req.params.action)) {
       res.status(400).json({ error: 'Unknown instance action' }); return;
