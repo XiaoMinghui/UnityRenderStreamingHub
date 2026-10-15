@@ -123,11 +123,9 @@ namespace Unity.RenderStreaming
 
             public override void SetChannel(string connectionId, RTCDataChannel channel)
             {
-                if (channel == null)
-                {
-                    Dispose();
-                }
-                else
+                if (ReferenceEquals(Channel, channel)) return;
+                Dispose();
+                if (channel != null)
                 {
                     AssignUserAndDevices();
                     receiver = new Receiver(channel);
@@ -143,6 +141,7 @@ namespace Unity.RenderStreaming
             protected virtual void OnDestroy()
             {
                 Dispose();
+                base.SetChannel(ConnectionId, null);
             }
 
             protected virtual void Dispose()
@@ -151,6 +150,8 @@ namespace Unity.RenderStreaming
                 subscriberDisposer?.Dispose();
                 receiver?.Dispose();
                 receiver = null;
+                receiverInput = null;
+                subscriberDisposer = null;
             }
 
             [NonSerialized] private InputUser inputUser;

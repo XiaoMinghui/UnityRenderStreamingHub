@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using NUnit.Framework;
 using Unity.RenderStreaming.InputSystem;
 using Unity.RenderStreaming.RuntimeTest.Signaling;
@@ -14,6 +15,75 @@ namespace Unity.RenderStreaming.RuntimeTest
 
     class MessageSerializerTest
     {
+        [Test]
+        public void TruncatedPayloadIsRejectedBeforeAllocating()
+        {
+            // Keep the pre-fix reproducer bounded: 13 actual bytes must not allocate the declared 1 MiB.
+            var bytes = new byte[13];
+            System.Buffer.BlockCopy(System.BitConverter.GetBytes((int)InputRemoting.MessageType.NewEvents), 0, bytes, 4, 4);
+            System.Buffer.BlockCopy(System.BitConverter.GetBytes(1024 * 1024), 0, bytes, 8, 4);
+            Assert.Throws<InvalidDataException>(() => MessageSerializer.Deserialize(bytes, out _));
+        }
+
+        [Test]
+        public void AllocationOfTruncatedPacketIsBounded()
+        {
+            var method = typeof(System.GC).GetMethod("GetAllocatedBytesForCurrentThread", System.Type.EmptyTypes);
+            if (method == null) Assert.Ignore("Allocation counter is not available on this runtime.");
+            var allocated = (System.Func<long>)System.Delegate.CreateDelegate(typeof(System.Func<long>), method);
+            long calibrationStart = allocated();
+            var calibration = new byte[4096];
+            long calibrationBytes = allocated() - calibrationStart;
+            System.GC.KeepAlive(calibration);
+            if (calibrationBytes < 4096) Assert.Ignore("Allocation counter is inactive in this Unity runtime; use the standalone Mono allocation probe.");
+            var bytes = new byte[13];
+            System.Buffer.BlockCopy(System.BitConverter.GetBytes((int)InputRemoting.MessageType.NewEvents), 0, bytes, 4, 4);
+            System.Buffer.BlockCopy(System.BitConverter.GetBytes(1024 * 1024), 0, bytes, 8, 4);
+            // Warm up the code before measuring; the old code allocates 1 MiB for each tiny packet.
+            try { MessageSerializer.Deserialize(bytes, out _); } catch (InvalidDataException) { }
+            long before = allocated();
+            for (int i = 0; i < 32; ++i)
+                try { MessageSerializer.Deserialize(bytes, out _); } catch (InvalidDataException) { }
+            long delta = allocated() - before;
+            UnityEngine.Debug.Log($"Input message allocation: 32 x 13-byte truncated packets allocated {delta} bytes.");
+            Assert.Less(delta, 256 * 1024, "Malformed packets must not allocate their untrusted declared length.");
+        }
+
+        [Test]
+        public void RejectsCustomTextAndMalformedHeadersWithoutPayloadAllocation()
+        {
+            Assert.IsFalse(MessageSerializer.TryDeserialize(null, out _));
+            Assert.IsFalse(MessageSerializer.TryDeserialize(new byte[11], out _));
+            Assert.IsFalse(MessageSerializer.TryDeserialize(System.Text.Encoding.UTF8.GetBytes("msg to unity"), out _));
+            Assert.IsFalse(MessageSerializer.TryDeserialize(System.Text.Encoding.UTF8.GetBytes("{\"MessageType\":\"Screen\",\"Width\":1280}"), out _));
+            foreach (int length in new[] { -1, 1, 1024 * 1024, int.MaxValue })
+            {
+                var bytes = new byte[12];
+                System.Buffer.BlockCopy(System.BitConverter.GetBytes(length), 0, bytes, 8, 4);
+                Assert.IsFalse(MessageSerializer.TryDeserialize(bytes, out var message));
+                Assert.IsNull(message.data);
+            }
+            var unknownType = new byte[12];
+            System.Buffer.BlockCopy(System.BitConverter.GetBytes(100), 0, unknownType, 4, 4);
+            Assert.IsFalse(MessageSerializer.TryDeserialize(unknownType, out _));
+            // Extra bytes are malformed too: one DataChannel message contains exactly one input frame.
+            Assert.IsFalse(MessageSerializer.TryDeserialize(new byte[13], out _));
+        }
+
+        [Test]
+        public void WireFormatRemainsLittleEndianAndAcceptsEmptyControlMessages()
+        {
+            var message = new InputRemoting.Message { participantId = 0x12345678,
+                type = InputRemoting.MessageType.NewEvents, data = new byte[] { 5, 6 } };
+            CollectionAssert.AreEqual(new byte[] { 0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0, 2, 0, 0, 0, 5, 6 }, MessageSerializer.Serialize(ref message));
+            foreach (InputRemoting.MessageType type in System.Enum.GetValues(typeof(InputRemoting.MessageType)))
+            {
+                message.type = type; message.data = System.Array.Empty<byte>();
+                Assert.IsTrue(MessageSerializer.TryDeserialize(MessageSerializer.Serialize(ref message), out var roundtrip));
+                Assert.AreEqual(type, roundtrip.type); Assert.IsEmpty(roundtrip.data);
+            }
+        }
+
         [Test]
         public void Serialize()
         {
@@ -50,6 +120,7 @@ namespace Unity.RenderStreaming.RuntimeTest
         private MonoBehaviourTest<MyMonoBehaviourTest> _test;
         private SignalingManagerInternal _target1, _target2;
         private RTCDataChannel _channel1, _channel2;
+        private InputDevice _testDevice;
         private string connectionId = "12345";
         const float ResendOfferInterval = 3f;
 
@@ -72,6 +143,8 @@ namespace Unity.RenderStreaming.RuntimeTest
         public IEnumerator UnitySetUp()
         {
             MockSignaling.Reset(true);
+            // Batch-mode editors have no physical devices. Supply a deterministic local input source.
+            _testDevice = UnityEngine.InputSystem.InputSystem.AddDevice<Keyboard>();
             _test = new MonoBehaviourTest<MyMonoBehaviourTest>();
 
             var dependencies1 = CreateDependencies();
@@ -142,11 +215,105 @@ namespace Unity.RenderStreaming.RuntimeTest
             _target1.Dispose();
             _target2.Dispose();
             UnityEngine.Object.DestroyImmediate(_test.gameObject);
+            if (_testDevice != null) UnityEngine.InputSystem.InputSystem.RemoveDevice(_testDevice);
+            _testDevice = null;
         }
 
         [Test]
         public void DoNothing()
         {
+        }
+
+        [Test]
+        public void CustomMessagesReachApplicationCallbacksAndDisposedReceiverDetaches()
+        {
+            var receiver = new Receiver(_channel1);
+            int inputMessages = 0, applicationMessages = 0;
+            receiver.onMessage += _ => inputMessages++;
+            DelegateOnMessage application = _ => applicationMessages++;
+            _channel1.OnMessage += application;
+            try
+            {
+                Assert.DoesNotThrow(() => _channel1.OnMessage(System.Text.Encoding.UTF8.GetBytes("msg to unity")));
+                Assert.DoesNotThrow(() => _channel1.OnMessage(System.Text.Encoding.UTF8.GetBytes("{\"MessageType\":\"Screen\",\"Width\":1280}")));
+                Assert.AreEqual(0, inputMessages);
+                Assert.AreEqual(2, applicationMessages);
+                var message = new InputRemoting.Message { type = InputRemoting.MessageType.StopSending, data = System.Array.Empty<byte>() };
+                var bytes = MessageSerializer.Serialize(ref message);
+                _channel1.OnMessage(bytes);
+                Assert.AreEqual(1, inputMessages);
+                receiver.Dispose(); receiver.Dispose();
+                Assert.IsFalse(System.Array.Exists(_channel1.OnMessage.GetInvocationList(), d => ReferenceEquals(d.Target, receiver)));
+                _channel1.OnMessage(bytes);
+                Assert.AreEqual(1, inputMessages, "Disposed input receivers must not handle subsequent messages.");
+                Assert.AreEqual(4, applicationMessages, "Disposal must preserve application-owned channel handlers.");
+            }
+            finally { receiver.Dispose(); _channel1.OnMessage -= application; }
+        }
+
+        [UnityTest, Timeout(5000)]
+        public IEnumerator TextJsonAndInputFramesShareARealChannel()
+        {
+            var receiver = new Receiver(_channel1);
+            int inputMessages = 0, applicationMessages = 0;
+            receiver.onMessage += _ => inputMessages++;
+            DelegateOnMessage application = _ => applicationMessages++;
+            _channel1.OnMessage += application;
+            try
+            {
+                var message = new InputRemoting.Message { type = InputRemoting.MessageType.StopSending, data = System.Array.Empty<byte>() };
+                var input = MessageSerializer.Serialize(ref message);
+                for (int i = 0; i < 32; i++)
+                {
+                    _channel2.Send("msg to unity");
+                    _channel2.Send("{\"MessageType\":\"Screen\",\"Width\":1280}");
+                    _channel2.Send(input);
+                }
+                yield return new WaitUntil(() => applicationMessages == 96);
+                Assert.AreEqual(32, inputMessages, "Only input-framed messages should reach InputRemoting.");
+                Assert.AreEqual(RTCDataChannelState.Open, _channel1.ReadyState);
+            }
+            finally { receiver.Dispose(); _channel1.OnMessage -= application; }
+        }
+
+        [TestCase(false), TestCase(true)]
+        public void ReplacingInputChannelDoesNotAccumulateReceivers(bool automatic)
+        {
+            var go = new GameObject("Input receiver lifecycle test");
+            go.SetActive(false);
+            InputChannelReceiverBase component = null;
+            InputActionAsset asset = null;
+            try
+            {
+                if (automatic)
+                    component = (InputChannelReceiverBase)go.AddComponent(typeof(AutomaticStreaming).GetNestedType("AutoInputReceiver", System.Reflection.BindingFlags.NonPublic));
+                else
+                {
+                    var receiver = go.AddComponent<InputReceiver>();
+                    asset = ScriptableObject.CreateInstance<InputActionAsset>();
+                    asset.AddActionMap("test"); receiver.actions = asset; component = receiver;
+                }
+                go.SetActive(true);
+                component.SetChannel("first", _channel1);
+                int count = _channel1.OnMessage.GetInvocationList().Length;
+                for (int i = 0; i < 32; i++) component.SetChannel("first", _channel1);
+                Assert.AreEqual(count, _channel1.OnMessage.GetInvocationList().Length, "Reassigning the same channel must be idempotent.");
+                for (int i = 0; i < 16; i++)
+                {
+                    component.SetChannel("second", _channel2);
+                    Assert.IsNull(_channel1.OnMessage, "Previous channel handlers must be detached.");
+                    component.SetChannel("first", _channel1);
+                    Assert.IsNull(_channel2.OnMessage);
+                    Assert.AreEqual(count, _channel1.OnMessage.GetInvocationList().Length);
+                }
+                UnityEngine.Object.DestroyImmediate(go);
+                Assert.IsNull(_channel1.OnMessage, "Destroying the component must detach its channel callbacks.");
+            }
+            finally
+            {
+                if (go != null) UnityEngine.Object.DestroyImmediate(go);
+                if (asset != null) UnityEngine.Object.DestroyImmediate(asset);
+            }
         }
 
 
@@ -163,6 +330,7 @@ namespace Unity.RenderStreaming.RuntimeTest
             senderInput.StopSending();
             senderDisposer.Dispose();
             sender.Dispose();
+            sender.Dispose();
         }
 
         [Test]
@@ -177,6 +345,7 @@ namespace Unity.RenderStreaming.RuntimeTest
             receiverInput.StartSending();
             receiverInput.StopSending();
             receiverDisposer.Dispose();
+            receiver.Dispose();
         }
 
         /// todo(kazuki): This test is failed for timeout on macOS.

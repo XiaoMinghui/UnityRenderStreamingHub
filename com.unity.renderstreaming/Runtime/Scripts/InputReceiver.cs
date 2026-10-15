@@ -295,11 +295,9 @@ namespace Unity.RenderStreaming
         /// <param name="channel">The RTCDataChannel to set.</param>
         public override void SetChannel(string connectionId, RTCDataChannel channel)
         {
-            if (channel == null)
-            {
-                Dispose();
-            }
-            else
+            if (ReferenceEquals(Channel, channel)) return;
+            Dispose();
+            if (channel != null)
             {
                 receiver = new Receiver(channel);
                 receiver.onDeviceChange += onDeviceChange;
@@ -347,6 +345,7 @@ namespace Unity.RenderStreaming
         protected virtual void OnDestroy()
         {
             Dispose();
+            base.SetChannel(ConnectionId, null);
         }
 
         protected virtual void Dispose()
@@ -355,6 +354,8 @@ namespace Unity.RenderStreaming
             subscriberDisposer?.Dispose();
             receiver?.Dispose();
             receiver = null;
+            receiverInput = null;
+            subscriberDisposer = null;
         }
 
         [Tooltip("Input actions associated with the player.")]

@@ -21,6 +21,7 @@ namespace Unity.RenderStreaming.InputSystem
         public new event Action<string, InputControlLayoutChange> onLayoutChange;
 
         private RTCDataChannel _channel;
+        private bool _disposed;
         private readonly List<InputDevice> _remoteDevices = new List<InputDevice>();
 
         private readonly Dictionary<string, string> _remoteLayouts = new Dictionary<string, string>();
@@ -53,14 +54,22 @@ namespace Unity.RenderStreaming.InputSystem
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+            if (_channel != null) _channel.OnMessage -= OnMessage;
+            _channel = null;
+            GC.SuppressFinalize(this);
             RemoveAllRemoteDevices();
             RemoveAllRemoteLayouts();
+            onMessage = null;
+            onDeviceChange = null;
+            onLayoutChange = null;
         }
 
         private void OnMessage(byte[] bytes)
         {
-            MessageSerializer.Deserialize(bytes, out var message);
-            onMessage?.Invoke(message);
+            // Custom text/JSON may share this channel. Leave it to application callbacks.
+            if (!_disposed && MessageSerializer.TryDeserialize(bytes, out var message)) onMessage?.Invoke(message);
         }
 
         /// <summary>
