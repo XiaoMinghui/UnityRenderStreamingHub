@@ -1,0 +1,129 @@
+# Unity Render Streaming maintenance
+
+This repository maintains reusable Unity Render Streaming package, signaling server and browser receiver functionality for Unity applications. It supports sharing the same source across projects; device support remains subject to the Unity Render Streaming and WebRTC platform requirements.
+
+## Source and branches
+
+- Repository: https://github.com/XiaoMinghui/UnityRenderStreamingHub
+- Source fork: https://github.com/XiaoMinghui/UnityRenderStreaming (`renderstreaming-maintained` at `936ed5b5526eaf699958a2c312e5c52f890670e5`)
+- Upstream: https://github.com/Unity-Technologies/UnityRenderStreaming
+- Maintenance branch: `main`
+- Initial upstream tag: `3.1.0-exp.9`
+- Initial upstream commit: `d7297df8f441b213c856e4564b5b438a8d8f8a3e`
+- Unity package: `com.unity.renderstreaming/`
+- Signaling server and browser receiver source: `WebApp/`
+- WebRTC dependency: `3.0.0-pre.8`
+
+The source fork's maintained 3.1 line was copied as a source snapshot into this repository's `main`, together with the optional instance pool. This repository starts with an independent root commit; upstream commits, branches and tags are not published here. The original fork and checkout retain their history. Existing projects using that checkout or Git URL are not redirected automatically. Install a tested tag or commit when reproducible builds are required; update package references deliberately.
+
+The package identity and existing Unity asset GUIDs are preserved. Common heartbeat, reconnection and receiver behavior is maintained here and reused by consuming projects.
+
+## Local shared development
+
+For example, keep this checkout at `D:/UnityProjects/UnityRenderStreamingHub`. Multiple Unity projects can point directly at the same package directory. A source edit is then available to those projects after Unity refreshes and recompiles.
+
+For another project beside the source checkout, such as `D:/UnityProjects/SampleProject`, `Packages/manifest.json` uses:
+
+```json
+"com.unity.renderstreaming": "file:../../UnityRenderStreamingHub/com.unity.renderstreaming"
+```
+
+The relative path is measured from the project's `Packages` directory. For another project at a different location, use the helper to calculate it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\UnityProjects\UnityRenderStreamingHub\Tools\Use-RenderStreamingPackage.ps1 -ProjectPath D:\UnityProjects\SampleProject
+```
+
+The helper backs up the manifest and lock file before editing the manifest. Unity resolves its own lock file when it next refreshes. It does not alter scenes, platform settings, or WebRTC's native binaries.
+
+## Installing from this repository on another computer
+
+Use Unity Package Manager's **Add package from git URL**:
+
+```text
+https://github.com/XiaoMinghui/UnityRenderStreamingHub.git?path=/com.unity.renderstreaming#main
+```
+
+Or configure an existing project using the helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Tools\Use-RenderStreamingPackage.ps1 -ProjectPath D:\UnityProjects\SampleProject -Mode Git -Revision main
+```
+
+For a release, replace `main` with a tested commit SHA or tag and commit the consuming project's `Packages/manifest.json` and `Packages/packages-lock.json`. A Git dependency is cached and locked per project: pushing the branch does not automatically update every consuming project. Updating the Git dependency through Package Manager, or changing its pinned revision, is still required. Local `file:` dependencies use the shared working copy directly.
+
+## Ownership of changes
+
+Maintain common signaling, heartbeat, reconnection, sender/receiver behavior, server code and browser code here. Device SDKs, application camera rigs, custom input adapters, business UI, scene assets and deployment-specific addresses belong in consuming projects. Shared runtime code must not depend on any particular device SDK or application.
+
+Consuming projects can use their own version control systems independently of this Git repository. Each workspace needs the shared source at the configured local path, or a package dependency using the fork's Git URL. Reference the package through Package Manager rather than copying it into each project or editing `Library/PackageCache`.
+
+## Server distribution
+
+Changing `WebApp/` does not update an already deployed `webserver.exe`. Install the WebApp dependencies for this source version, build it, and deploy the resulting server/browser application. Package updates and server deployment are distinct steps and must use a compatible protocol version.
+
+Run `powershell -ExecutionPolicy Bypass -File Tools/Start-Server.ps1 -Port 8080` with Node.js 22 and npm installed. The launcher installs locked dependencies when missing, builds TypeScript, then serves this checkout's browser files in WebSocket/public mode. Application projects can delegate their launchers here. Previously distributed `webserver.exe` binaries need rebuilding before they include source changes.
+
+## Updating the source
+
+```powershell
+git switch main
+git pull --ff-only origin main
+# edit, validate, commit
+git push origin main
+```
+
+Review upstream source updates separately and apply selected changes deliberately, preserving required attribution and notices. Do not merge upstream ancestry into this repository's independent history. Upstream `main` may have changed dependencies or APIs compared with this pinned 3.1 baseline.
+
+The initial local checkout uses Git sparse checkout for the package, WebApp, Tools and root documentation. The complete source snapshot is available remotely. Use `git sparse-checkout disable` if the other upstream sample projects or templates are needed.
+
+Upstream licenses and notices remain in this repository and in the Unity package.
+
+## Connection reliability (2026-10-15)
+
+- Server sends protocol Ping every 20 seconds, terminating a socket after three unanswered probes (about 60–80 seconds depending on the failure instant). Browsers answer these frames automatically. Browser application Ping/Pong runs every 15 seconds with a 45-second timeout so the page can detect a half-open socket too.
+- Unity's single SDK worker sends protocol Ping every 15 seconds, allows 3 seconds for Pong and retries after 5 seconds. Stop cancels retries and stale queued callbacks. `ConnectionState`/`IsConnected` describe signaling; they do not assert that video is playing. On a new socket the manager releases old peers and handler registrations.
+- ReceiverSession owns one retry timer with 1/2/4/8/15-second backoff and jitter. Retries create a fresh signaling socket, peer and input channel; input event listeners, gamepad polling and old tracks are disposed. Returning from the background starts a fresh session.
+- First decoded, playing video must arrive within 30 seconds. Once playing, 8 seconds without decoded-frame progress triggers recreation; received-frame progress distinguishes loss of data from stalled decoding. Hidden tabs skip frame deadlines to avoid browser throttling false positives. These thresholds are constructor options on ReceiverSession.
+- Application lifecycle policy belongs in the consuming project. Applications that release streaming resources when suspended should resume only a previously requested stream and preserve explicit Stop intent. Use the SDK's connection retry worker instead of adding a second Unity signaling reconnect loop.
+
+Validation: `cd WebApp; npm ci; npm run build; npm test -- --runInBand`. Node 22 compatibility for the upstream mock WebSocket tests is included. Live Chrome/Unity checks covered a 1280x720 stream, forced browser socket closure, server restart, three pause/resume cycles and injected receive/decode stalls. Each recovery had one live browser socket and one Unity manager/camera. Android builds and physical-device retesting are outside this validation.
+
+## Receiver presentation
+
+Open `/receiver/index.html`. It connects immediately and plays muted inline video automatically. There is no play button in the normal flow. The video fills the viewport using `object-fit: contain`: its aspect ratio and full contents are preserved, with letterboxing when screen and stream ratios differ. Changing the source resolution does not require changing page dimensions. The bottom-right button enters/exits fullscreen and reports unsupported/denied requests without disrupting the stream.
+
+Connection progress uses discrete stages (configuration, signaling, waiting for the sender, waiting for decoded frames), not a media-download percentage. The overlay hides only when frames are decoded and the video is actually playing. Interruptions restore the overlay with the cause and automatic retry; an immediate retry action is available. A browser policy explicitly denying autoplay shows a “continue playback” action as an exception. See [MDN autoplay behavior](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay) and [fullscreen requirements](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen). An embedding iframe/WebView must allow autoplay/fullscreen and provide WebRTC support; its host policy can still restrict these features.
+
+Browser regression suite (real WebSocket, WebRTC, a synthetic canvas sender and Chrome; no Unity required):
+
+```powershell
+cd WebApp
+npm ci
+npm run test:receiver
+# If Chrome is installed elsewhere, set CHROME_PATH to its executable first.
+```
+
+The suite checks loading through input connection without a video frame, automatic playback, aspect-preserving portrait layout/pointer mapping, enter/exit fullscreen, three reconnections, remote input, receive/decode freeze recovery, denied-autoplay recovery and server-configuration failure recovery. Test output is printed to the terminal; build artifacts, dependencies and test logs stay out of Git.
+
+## Native Unity receiver
+
+`StreamingReceiver` provides an application-independent native receiver for the WebSocket/Public signaling and Broadcast sender workflow. It creates one video/audio/input session automatically, reuses the SDK's signaling heartbeat/retry worker, and recreates failed media/input sessions with bounded backoff. Pause releases its runtime; resume restores only a previously requested receiver. Explicit Stop remains stopped after resume.
+
+Set `SignalingUrl` before starting (or call `Retry()` after changing it). Use `StartReceiving()`, `StopReceiving()` and `Retry()` for application control. `StateChanged`, `TextureUpdated`, `Texture`, `DecodedFrames` and `IsInputConnected` expose status and media to a consuming project's view. Call `SetInputRegion(screenRect, videoSize)` with the actual aspect-fitted image rectangle to map mouse/primary-touch coordinates into source video pixels. The current SDK position corrector supports a primary pointer; applications needing richer gestures must implement their input policy separately.
+
+The view, server address, scenes and platform configuration belong to the consuming project. Configure a project-owned `RenderStreamingSettings` asset with `automaticStreaming = false`, register it in EditorBuildSettings, and preload it for players; otherwise the SDK automatic broadcaster can create an additional manager. Do not edit the shared package's default settings asset to configure one application. See the package/WebRTC platform requirements for supported native targets.
+
+Video health polls the receiver's inbound RTP statistics once per second. Increasing `framesDecoded` updates the last-frame time; `bytesReceived` distinguishes reception loss from stalled decoding. `VideoStreamTrack.OnVideoReceived` announces the first texture or a texture resize, so it must not be treated as a per-frame heartbeat. Default deadlines are 30 seconds for the first decoded/visible frame and 8 seconds without decode progress.
+
+Native receiver validation used two Unity 2022.3 editors with a real 1280x720 stream at approximately 30 fps, primary-touch input over DataChannel, three pause/resume cycles, explicit Stop followed by resume, and signaling-server restart recovery. Each recovered receiver had one manager. These are editor interoperability checks; no Android package or physical-device validation is implied.
+
+## Optional instance pool (2026-10-15)
+
+See [instance pool setup, protocol and boundaries](INSTANCE_POOL.md). Enable it using `Tools/Start-PoolServer.ps1` with `RENDERSTREAMING_POOL_TOKEN` configured; the existing launcher stays unchanged. The additional `/pool` endpoint isolates sender registrations and leased sessions from legacy Public/Private signaling. The browser pool receiver lives at `/pool/index.html`. Existing projects remain on their current package source until explicitly migrated.
+
+Validation includes the TypeScript build and server regression suite, legacy receiver Chrome regression, and Chrome pool regression with two synthetic senders and three receivers (distinct decoded video, isolated input, waiting beyond 30 seconds, cancellation, reset/reassignment and socket recovery). The independent browser unit suites also pass (69 tests; the upstream `signaling.test.js` suite requires packaged server binaries and is excluded from that unit run; equivalent source-server routing is exercised by server and Chrome tests).
+
+A disposable Unity 2022.3.62f3c1 project resolves this checkout as a local package and compiles its runtime/editor/test assemblies. The PlayMode `PoolSenderSignalingTest` passes against the real Node server, covering initial registration/readiness, main-thread Offer/Answer delivery, queueing, release and current/stale reset tickets. Run it by setting `RENDERSTREAMING_POOL_TEST_WEBAPP` to the built WebApp source directory (and optionally `RENDERSTREAMING_POOL_TEST_NODE`), adding the package to `testables`, and filtering the Unity Test Runner to `Unity.RenderStreaming.RuntimeTest.PoolSenderSignalingTest`.
+
+These pool checks do not validate Unity-rendered media, GPU capacity, built players or physical devices. The prior native-receiver validation above describes the pre-pool workflow. The first pool version uses manually launched senders and in-memory queues; reconnects join again rather than retaining a lease or queue position.

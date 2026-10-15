@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080c12">
+  <link rel="icon" href="../images/favicon.ico">
+  <link rel="stylesheet" href="css/style.css">
+  <title>Unity Render Streaming 远程画面</title>
+</head>
+<body>
+  <main id="viewer" aria-label="Unity Render Streaming 远程画面">
+    <div id="player"></div>
+    <div id="liveBadge" hidden><span></span>实时画面</div>
+    <section id="connectionOverlay" aria-live="polite" role="status">
+      <div class="connection-card">
+        <div class="eyebrow">UNITY RENDER STREAMING · 远程画面</div>
+        <div class="status-symbol" aria-hidden="true"></div>
+        <h1 id="stateTitle">正在连接</h1>
+        <p id="message">正在加载连接配置</p>
+        <progress id="connectionProgress" value="10" max="100" aria-label="连接进度"></progress>
+        <div class="actions">
+          <button id="resumePlayback" hidden>继续播放</button>
+          <button id="retryButton" hidden>立即重试</button>
+        </div>
+      </div>
+    </section>
+    <div id="notice" role="alert" hidden></div>
+  </main>
+  <noscript>请开启 JavaScript 以连接 Unity Render Streaming 远程画面。</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
