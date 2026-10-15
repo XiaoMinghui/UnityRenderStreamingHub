@@ -138,7 +138,13 @@ Validation includes the TypeScript build and server regression suite, legacy rec
 
 A disposable Unity 2022.3.62f3c1 project resolves this checkout as a local package and compiles its runtime/editor/test assemblies. The PlayMode `PoolSenderSignalingTest` passes against the real Node server, covering initial registration/readiness, main-thread Offer/Answer delivery, queueing, release and current/stale reset tickets. Run it by setting `RENDERSTREAMING_POOL_TEST_WEBAPP` to the built WebApp source directory (and optionally `RENDERSTREAMING_POOL_TEST_NODE`), adding the package to `testables`, and filtering the Unity Test Runner to `Unity.RenderStreaming.RuntimeTest.PoolSenderSignalingTest`.
 
-These pool checks do not validate Unity-rendered media, GPU capacity, built players or physical devices. The prior native-receiver validation above describes the pre-pool workflow. The pool uses fixed senders and in-memory queues; reconnects join again rather than retaining a lease or queue position. Senders may be started manually or using the separately enabled [process Agent](Tools/ProcessAgent/README.md).
+These pool checks do not validate Unity-rendered media, GPU capacity, built players or physical devices. The prior native-receiver validation above describes the pre-pool workflow. The pool uses fixed senders and in-memory queues. The supplied pool browser receiver can [recover its reservation or queue position](INSTANCE_POOL.md#short-disconnection-recovery) during a short outage; other clients must explicitly opt in. Senders may be started manually or using the separately enabled [process Agent](Tools/ProcessAgent/README.md).
+
+## Receiver session recovery (2026-10-15)
+
+The pool server retains opted-in receiver sessions for 30 seconds by default, configurable with `--pool-resume-seconds` / `-ResumeGraceSeconds` (0–300). Recovered media uses new connection/lease IDs on the original sender without invoking application reset. Expired sessions release capacity through the existing exact-ticket reset handshake. Administrative termination revokes recovery even for offline sessions. Sender/server restart requires a new session; native Unity/Android receivers and legacy Public/Private signaling are unchanged.
+
+Validation includes real-WebSocket recovery/queue/expiry/fencing/revocation tests and Chrome media tests with brief offline periods, full page reload, restored remote input, queue refresh, unchanged sender reset counters, grace expiry and reallocation. The Unity `PoolSenderSignalingTest` also exercises a receiver recovery with fresh Offer routing and no reset, followed by explicit release and reset-ticket validation. These are browser/Editor checks, not Android physical-device or built-player validation.
 
 ## Process Agent validation (2026-10-15)
 

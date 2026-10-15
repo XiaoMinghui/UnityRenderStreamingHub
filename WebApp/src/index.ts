@@ -24,6 +24,7 @@ export class RenderStreaming {
           .option('-m, --mode <type>', 'Choose Communication mode public or private.', process.env.MODE || 'public')
           .option('-l, --logging <type>', 'Choose http logging type combined, dev, short, tiny or none.', process.env.LOGGING || 'dev')
           .option('--pool', 'Enable the additional /pool WebSocket endpoint.', false)
+          .option('--pool-resume-seconds <n>', 'Retain resumable receiver sessions for 0-300 seconds (0 disables recovery).', '30')
           .option('--admin', 'Enable the authenticated management API and dashboard.', false)
           .option('--agents', 'Enable authenticated process agents on /agent (requires --admin --pool).', false)
           .parse(argv);
@@ -38,6 +39,7 @@ export class RenderStreaming {
           logging: option.logging,
           pool: option.pool,
           poolToken: process.env.RENDERSTREAMING_POOL_TOKEN,
+          poolResumeGraceMs: Number(option.poolResumeSeconds) * 1000,
           admin: option.admin,
           adminToken: process.env.RENDERSTREAMING_ADMIN_TOKEN,
           agents: option.agents,
@@ -58,6 +60,9 @@ export class RenderStreaming {
   constructor(options: Options) {
     if (options.pool && (options.type !== 'websocket' || !options.poolToken))
       throw new Error('The instance pool requires WebSocket signaling and RENDERSTREAMING_POOL_TOKEN.');
+    if (options.pool && options.poolResumeGraceMs !== undefined &&
+        (!Number.isInteger(options.poolResumeGraceMs) || options.poolResumeGraceMs < 0 || options.poolResumeGraceMs > 300000))
+      throw new Error('Pool resume seconds must be from 0 to 300.');
     this.options = options;
     this.app = createServer(this.options);
     if (this.options.secure) {
@@ -93,7 +98,7 @@ export class RenderStreaming {
 
       //Start Websocket Signaling server
       const signaling = new WSSignaling(this.server, this.options.mode, 20000, 3,
-        options.pool ? { senderToken: options.poolToken } : undefined, options.agents ? options.agentToken : undefined);
+        options.pool ? { senderToken: options.poolToken, resumeGraceMs: options.poolResumeGraceMs } : undefined, options.agents ? options.agentToken : undefined);
       this.app.locals.pool = signaling.pool;
       this.app.locals.agents = signaling.agents;
     }

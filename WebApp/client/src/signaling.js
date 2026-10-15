@@ -175,7 +175,7 @@ export class WebSocketSignaling extends EventTarget {
         return;
       }
 
-      Logger.log(msg);
+      Logger.log(msg.resumeToken ? { ...msg, resumeToken: '[redacted]' } : msg);
 
       switch (msg.type) {
         case "connect":

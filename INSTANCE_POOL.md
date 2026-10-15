@@ -53,6 +53,20 @@ Visit `/pool/index.html`, or `/pool/index.html?pool=your-content-group`. Receive
 
 Queue waiting has no video deadline. After assignment, normal decoded-frame monitoring, autoplay recovery, input and fullscreen behavior apply. Decoded, playing video confirms the reservation as an active session.
 
+## Short-disconnection recovery
+
+The supplied browser pool receiver opts into session recovery. By default, the server retains a disconnected receiver for **30 seconds after detecting its disconnection or accepting an explicit suspension**. Configure this with `Tools/Start-PoolServer.ps1 -ResumeGraceSeconds 30`, or `--pool-resume-seconds 30` on the server command line. The supported range is 0–300 seconds; 0 disables recovery for new sessions. Clients using the original `join` message without `resumable: true` retain their original immediate-release behavior.
+
+- A disconnected active receiver keeps its original sender reserved. Transport peers and input channels are disposed, but no application reset is requested. A reconnect or same-tab page refresh within the window negotiates a fresh media connection with that sender. Connection and lease IDs change, preventing stale transports from controlling the recovered stream. The original join/use timestamps remain available to management.
+- A waiting receiver keeps its queue entry and relative order. An offline queue entry is skipped for assignment, so it does not block connected users behind it. It resumes at its position among the remaining entries when it reconnects.
+- Expiry releases the reservation. The sender must acknowledge a fresh application reset before another user receives it. An expired or unknown recovery credential causes the supplied browser receiver to request a new session and queue normally.
+- Explicit Leave/cancel releases immediately when connected. Administrative termination revokes recovery and stops the supplied receiver until a manual rejoin. Closing a browser tab is treated as a possible refresh, so capacity is retained until grace expiry. If a receiver is already offline, an explicit local Stop cannot notify the server and capacity expires normally.
+- Sender disconnection/process restart and signaling-server restart invalidate recovery. Application state cannot be promised after its owner has restarted. The native Unity `StreamingReceiver` still uses legacy signaling; this pool recovery feature does not change native or legacy connection semantics.
+
+The browser keeps a random recovery credential in memory and in tab-scoped `sessionStorage`, keyed by content pool. It survives same-tab reloads and is removed on explicit cancel/administrative stop. If storage is blocked, in-page recovery still works; reload recovery is unavailable. This credential is a bearer capability: keep it private and use WSS on untrusted networks. It is not sent in URLs, management snapshots or events, and signaling logs redact it. One credential owns one receiver transport; a successful recovery fences and closes any previous live transport. Copying a tab's storage can therefore transfer that session rather than create a second viewer.
+
+Recovery preserves the existing application instance; application code can still choose its own behavior when input/peer connections change. It does not restore a saved scene snapshot, promise uninterrupted playback, or provide durable sessions across server restart. Heartbeat detection of a half-open socket can occur later than the underlying physical network loss.
+
 ## Lifecycle and protocol
 
 Sender states are `resetting → idle → reserved → busy → resetting`; offline senders are removed. Reset expiry marks an instance `unavailable`, never idle. A later valid completion can restore it. An assignment reserves capacity synchronously, before messages are sent.
@@ -63,13 +77,17 @@ Sender states are `resetting → idle → reserved → busy → resetting`; offl
 | Server → sender | `registered`, `reset {resetId}` | Begin initial preparation or user-state cleanup |
 | Sender → server | `ready {resetId}` | Confirm the current reset has completed |
 | Receiver → server | `join {connectionId, poolId}` | Request one session |
+| Receiver → server | `join {connectionId, poolId, resumable: true, resumeToken?}` | Opt into recovery or recover an existing session |
+| Server → receiver | `session {resumeToken?, graceMs, resumed}` | Issue/confirm a private recovery credential; absent when disabled |
+| Server → receiver | `resume-expired` | Previous session is unavailable; a fresh session follows |
+| Receiver → server | `suspend` | Retain a recoverable session while disposing its transport |
 | Server → receiver | `queued {position, poolId}` | Position within the requested pool |
 | Server → both | `assigned {connectionId, leaseId, instanceId}` | Bind one sender and one receiver |
 | Server → receiver | Existing `connect` message | Begin existing media negotiation |
 | Both directions | Existing `offer/answer/candidate` with top-level `leaseId` | Route media negotiation only between the leased sockets |
 | Receiver → server | `streaming {connectionId, leaseId}` | Confirm decoded playback |
 | Receiver → server | `leave` | Cancel waiting or end the session |
-| Either → server | `disconnect {connectionId, leaseId}` | End the matching media session |
+| Either → server | `disconnect {connectionId, leaseId}` | Dispose media; recoverable receivers retain the session temporarily, other clients release it |
 
 The server validates socket ownership and a random lease ID on media/disconnect messages. The existing signaling payload format is retained inside the pool envelope. Heartbeat runs independently of queue/media state. Default deadlines are 10 seconds to register/join, 30 seconds to start playback and 30 seconds to acknowledge reset; server heartbeat uses the same 20-second/three-miss policy as legacy signaling.
 
@@ -77,7 +95,7 @@ The server validates socket ownership and a random lease ID on media/disconnect 
 
 - Fixed instances, launched manually or through the separately enabled process Agent. The pool does not automatically scale instances or schedule GPU capacity. Agent commands are restricted to locally configured executables.
 - Queues and leases are in memory on one server process. Server restart clears them; senders re-register and receivers retry. No cross-server coordination or durable queue.
-- A signaling disconnect ends that lease. A reconnect or page refresh joins the queue again; there is no sticky session or preserved queue position across socket loss. Waiting in a background tab retains the live socket and queue position. Returning to an active stream follows the existing fresh-media recovery policy.
+- Receiver sessions opting into recovery retain capacity/queue position for the configured grace window. Reconnects outside that window, sender failure and server restart require a new session. Waiting in a background tab retains the live socket and queue position; returning to an active stream rebuilds media while preserving its recoverable reservation.
 - The existing native Unity receiver continues using its legacy workflow. This first pool receiver is the browser page.
 - Compatibility remains subject to Unity Render Streaming/WebRTC requirements. Capacity depends on actual scene, GPU encoding resources, resolution, frame rate and network. Automated browser tests do not validate physical devices.
 
@@ -92,4 +110,4 @@ npm run test:receiver
 npm run test:pool
 ```
 
-Server tests use real WebSockets, covering exclusive allocation, FIFO/cancellation, pool separation, reset tickets, startup/reset expiry, decoded-playback acknowledgement, sender failure, token/lease validation and legacy Public/Private coexistence. Chrome pool tests use two canvas senders and three receivers, verifying distinct decoded video, isolated input, queue waiting beyond 30 seconds, cancel/rejoin, release/reset/reassignment and socket recovery. Legacy receiver regression is run separately. Unity compile and live interoperability results are recorded in `MAINTENANCE.md`; do not treat browser-only results as Unity-player or physical-device validation.
+Server tests use real WebSockets, covering exclusive allocation, FIFO/cancellation, pool separation, reset tickets, startup/reset expiry, decoded-playback acknowledgement, sender failure, recovery-token/lease ownership, grace expiry, administration revocation and legacy Public/Private coexistence. Chrome pool tests use two canvas senders and multiple receivers, verifying distinct decoded video, isolated input, queue waiting beyond 30 seconds, cancellation, same-instance outage/page-refresh recovery without application reset, queue refresh, grace expiry/reassignment and expired-token requeue. Legacy receiver regression is run separately. Unity compile and live interoperability results are recorded in `MAINTENANCE.md`; do not treat browser-only results as Unity-player or physical-device validation.

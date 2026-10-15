@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const labels = { idle: '空闲', reserved: '连接中', busy: '使用中', resetting: '准备中', unavailable: '异常', queued: '排队中', connecting: '连接中', streaming: '串流中', stopped: '已停止', starting: '启动中', running: '运行中', stopping: '停止中', backoff: '等待重启', failed: '失败', unknown: '状态未知', unregistered: '未注册' };
+const labels = { idle: '空闲', reserved: '连接中', busy: '使用中', resetting: '准备中', unavailable: '异常', queued: '排队中', connecting: '连接中', streaming: '串流中', reconnecting: '等待恢复', stopped: '已停止', starting: '启动中', running: '运行中', stopping: '停止中', backoff: '等待重启', failed: '失败', unknown: '状态未知', unregistered: '未注册' };
 let token = '', state, timer, loading = false, mutating = false, generation = 0;
 const node = (tag, text, className) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (className) n.className = className; return n; };
 const duration = time => { const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000)); return seconds < 60 ? `${seconds} 秒` : seconds < 3600 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds / 60) % 60} 分`; };
@@ -55,7 +55,7 @@ function render() {
   const sessions = $('sessionRows'); sessions.replaceChildren();
   for (const s of state.sessions.filter(filter)) {
     const row = node('tr'); row.dataset.session = s.connectionId;
-    identity(row, s.connectionId, s.poolId); status(row, s.state, s.position ? `第 ${s.position} 位` : ''); cell(row, s.instanceId || '等待分配');
+    identity(row, s.connectionId, s.poolId); status(row, s.state, s.reconnectUntil ? `保留至 ${new Date(s.reconnectUntil).toLocaleTimeString()}${s.position ? ` · 第 ${s.position} 位` : ''}` : s.position ? `第 ${s.position} 位` : ''); cell(row, s.instanceId || '等待分配');
     cell(row, duration(s.assignedAt || s.joinedAt));
     cell(row).append(button(s.state === 'queued' ? '移出队列' : '结束会话', `/sessions/${encodeURIComponent(s.connectionId)}/end`, `结束 ${s.connectionId}？用户需要手动重新加入。`)); sessions.append(row);
   }

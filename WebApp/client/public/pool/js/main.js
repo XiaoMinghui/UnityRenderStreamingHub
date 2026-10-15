@@ -26,7 +26,7 @@ function showState(state, text) {
   cancel.hidden = state !== 'queued';
 }
 async function setup() {
-  session?.stop();
+  session?.stop(true);
   session = null;
   const request = ++generation;
   clearTimeout(setupTimer);
@@ -63,7 +63,7 @@ retry.onclick = () => session ? (session.active ? session.retry() : session.star
 cancel.onclick = () => { session?.stop(); showState('stopped', '已离开等待队列，可以重新加入'); };
 resume.onclick = () => session?.resumePlayback();
 window.addEventListener('resize', () => session?.player.resizeVideo());
-window.addEventListener('pagehide', () => { active = false; ++generation; clearTimeout(setupTimer); controller?.abort(); session?.stop(); });
+window.addEventListener('pagehide', () => { active = false; ++generation; clearTimeout(setupTimer); controller?.abort(); session?.stop(true); });
 window.addEventListener('pageshow', event => { if (event.persisted) { active = true; setup(); } });
 document.addEventListener('contextmenu', event => event.preventDefault());
 setup();

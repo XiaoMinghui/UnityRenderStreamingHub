@@ -16,7 +16,7 @@ namespace Unity.RenderStreaming.RuntimeTest
     public class PoolSenderSignalingTest
     {
         [Serializable] private class Payload { public string sdp, connectionId; }
-        [Serializable] private class Message { public string type, connectionId, leaseId; public Payload data; }
+        [Serializable] private class Message { public string type, connectionId, leaseId, resumeToken; public Payload data; }
         private Process server;
         private PoolSenderSignaling sender;
         private WebSocket receiver, waiting;
@@ -57,12 +57,13 @@ namespace Unity.RenderStreaming.RuntimeTest
             Assert.IsFalse(server.HasExited, "Test server failed to start.");
 
             string reset = null, offer = null;
-            int resets = 0, starts = 0;
+            int resets = 0, starts = 0, disconnects = 0;
             var errors = new ConcurrentQueue<string>();
             sender = new PoolSenderSignaling($"ws://127.0.0.1:{port}/pool", "unity-test", "default", "unity-pool-test-token", SynchronizationContext.Current);
             sender.OnStart += _ => starts++;
             sender.ResetRequested += ticket => { reset = ticket; resets++; };
             sender.OnOffer += (_, data) => offer = data.sdp;
+            sender.OnDestroyConnection += (_, __) => disconnects++;
             sender.Error += errors.Enqueue;
             sender.Start();
             yield return Until(() => reset != null);
@@ -71,7 +72,10 @@ namespace Unity.RenderStreaming.RuntimeTest
 
             var firstMessages = new ConcurrentQueue<Message>();
             receiver = Connect(port, firstMessages);
-            receiver.Send("{\"type\":\"join\",\"connectionId\":\"unity-receiver\",\"poolId\":\"default\"}");
+            receiver.Send("{\"type\":\"join\",\"connectionId\":\"unity-receiver\",\"poolId\":\"default\",\"resumable\":true}");
+            Message session = null;
+            yield return Until(() => Find(firstMessages, "session", out session));
+            Assert.IsNotEmpty(session.resumeToken);
             Message assignment = null;
             yield return Until(() => Find(firstMessages, "assigned", out assignment));
             receiver.Send("{\"type\":\"offer\",\"leaseId\":\"" + assignment.leaseId + "\",\"data\":{\"connectionId\":\"unity-receiver\",\"sdp\":\"test-offer\"}}");
@@ -82,6 +86,20 @@ namespace Unity.RenderStreaming.RuntimeTest
             yield return Until(() => Find(firstMessages, "answer", out answer));
             Assert.AreEqual("test-answer", answer.data.sdp);
             receiver.CloseAsync();
+            yield return Until(() => disconnects == 1);
+            Assert.AreEqual(1, resets, "A recoverable receiver outage must not reset application state.");
+            var resumedMessages = new ConcurrentQueue<Message>();
+            receiver = Connect(port, resumedMessages);
+            receiver.Send("{\"type\":\"join\",\"connectionId\":\"unity-resumed\",\"poolId\":\"default\",\"resumable\":true,\"resumeToken\":\"" + session.resumeToken + "\"}");
+            Message resumedAssignment = null;
+            yield return Until(() => Find(resumedMessages, "assigned", out resumedAssignment));
+            yield return Until(() => sender.ConnectionId == "unity-resumed");
+            Assert.AreNotEqual(assignment.leaseId, resumedAssignment.leaseId);
+            offer = null;
+            receiver.Send("{\"type\":\"offer\",\"leaseId\":\"" + resumedAssignment.leaseId + "\",\"data\":{\"connectionId\":\"unity-resumed\",\"sdp\":\"resumed-offer\"}}");
+            yield return Until(() => offer == "resumed-offer");
+            Assert.AreEqual(1, resets);
+            receiver.Send("{\"type\":\"leave\"}");
             yield return Until(() => resets == 2);
 
             var secondMessages = new ConcurrentQueue<Message>();

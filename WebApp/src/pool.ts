@@ -7,6 +7,7 @@ export interface PoolOptions {
   resetTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   maxQueueLength?: number;
+  resumeGraceMs?: number;
 }
 
 interface Sender {
@@ -32,6 +33,8 @@ interface Session {
   joinedAt: number;
   assignedAt?: number;
   streamingAt?: number;
+  resumeToken?: string;
+  detachedUntil?: number;
 }
 
 const id = () => randomBytes(16).toString('hex');
@@ -45,6 +48,8 @@ export default class PoolSignaling {
   private sessions = new Map<WebSocket, Session>();
   private queue: Session[] = [];
   private drained = new Set<string>();
+  private resumable = new Map<string, Session>();
+  private ended = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
   private heartbeat: ReturnType<typeof setInterval>;
   private events: { at: number; type: string; subject: string; message: string }[] = [];
@@ -57,7 +62,7 @@ export default class PoolSignaling {
   /** Management snapshots intentionally exclude sockets, tokens and lease/reset tickets. */
   snapshot() {
     const senders = Array.from(this.senders.values());
-    const sessions = Array.from(this.sessions.values());
+    const sessions = this.allSessions();
     return {
       at: Date.now(),
       summary: { online: senders.length, idle: senders.filter(s => s.state === 'idle' && !s.draining).length,
@@ -67,9 +72,9 @@ export default class PoolSignaling {
         draining: s.draining, connectedAt: s.connectedAt, connectionId: s.session?.connectionId,
         lastError: s.lastError })),
       sessions: sessions.map(s => ({ connectionId: s.connectionId, poolId: s.poolId,
-        instanceId: s.sender?.instanceId, state: s.sender ? (s.streamingAt ? 'streaming' : 'connecting') : 'queued',
+        instanceId: s.sender?.instanceId, state: s.detachedUntil ? 'reconnecting' : s.sender ? (s.sender.state === 'busy' ? 'streaming' : 'connecting') : 'queued',
         position: s.sender ? undefined : s.position, joinedAt: s.joinedAt,
-        assignedAt: s.assignedAt, streamingAt: s.streamingAt })),
+        assignedAt: s.assignedAt, streamingAt: s.streamingAt, reconnectUntil: s.detachedUntil })),
       events: this.events.slice()
     };
   }
@@ -99,9 +104,13 @@ export default class PoolSignaling {
   }
 
   endSession(connectionId: string): boolean {
-    const session = Array.from(this.sessions.values()).find(s => s.connectionId === connectionId);
+    const session = this.allSessions().find(s => s.connectionId === connectionId);
     if (!session) return false;
     this.send(session.socket, { type: 'ended', reason: 'Session ended by administrator' });
+    if (session.resumeToken) {
+      this.ended.set(session.resumeToken, Date.now() + Math.max(300000, this.options.resumeGraceMs ?? 30000));
+      if (this.ended.size > 1000) this.ended.delete(this.ended.keys().next().value);
+    }
     this.release(session, 'Session ended by administrator');
     session.socket.close(1000, 'Session ended by administrator');
     return true;
@@ -109,6 +118,8 @@ export default class PoolSignaling {
 
   constructor(private options: PoolOptions) {
     if (!options.senderToken) throw new Error('Set RENDERSTREAMING_POOL_TOKEN before enabling the instance pool.');
+    if (options.resumeGraceMs !== undefined && (!Number.isInteger(options.resumeGraceMs) || options.resumeGraceMs < 0 || options.resumeGraceMs > 300000))
+      throw new Error('Pool resume grace must be an integer from 0 to 300000 milliseconds.');
     const misses = new Map<WebSocket, number>();
     this.wss.on('connection', socket => {
       misses.set(socket, 0);
@@ -155,12 +166,46 @@ export default class PoolSignaling {
     this.send(socket, { type: 'error', message });
   }
 
+  private allSessions(): Session[] {
+    return Array.from(new Set([...Array.from(this.sessions.values()), ...Array.from(this.resumable.values())]));
+  }
+
+  private detach(session: Session): void {
+    if (session.detachedUntil) return;
+    this.sessions.delete(session.socket);
+    session.detachedUntil = Date.now() + (this.options.resumeGraceMs ?? 30000);
+    const sender = session.sender;
+    if (sender) {
+      // Dispose only transport resources; the application reset hook must not run.
+      this.send(sender.socket, { type: 'disconnect', connectionId: session.connectionId, leaseId: session.leaseId,
+        reason: 'Receiver reconnecting' });
+      session.leaseId = undefined;
+      sender.state = 'reserved'; sender.deadline = undefined;
+    }
+    this.record('reconnecting', session.connectionId, 'Receiver session retained temporarily');
+    this.schedule();
+  }
+
+  private attach(session: Session): void {
+    if (!session.sender) return;
+    const sender = session.sender;
+    session.leaseId = id();
+    sender.state = 'reserved'; sender.deadline = Date.now() + (this.options.assignmentTimeoutMs ?? 30000);
+    const assignment = { type: 'assigned', connectionId: session.connectionId, leaseId: session.leaseId,
+      instanceId: sender.instanceId };
+    this.send(sender.socket, assignment); this.send(session.socket, assignment);
+    this.send(session.socket, { type: 'connect', connectionId: session.connectionId, polite: true });
+  }
+
   private receive(socket: WebSocket, message: any): void {
     if (message.type === 'ping') { this.send(socket, { type: 'pong', id: message.id }); return; }
     if (message.type === 'register') { this.register(socket, message); return; }
     if (message.type === 'join') { this.join(socket, message); return; }
     const sender = this.senders.get(socket);
     const session = this.sessions.get(socket);
+    if (message.type === 'suspend' && session?.resumeToken) {
+      this.detach(session); socket.close(1000, 'Receiver reconnecting'); return;
+    }
     if (message.type === 'ready' && sender) {
       if (!sender.resetId || message.resetId !== sender.resetId ||
           (sender.state !== 'resetting' && sender.state !== 'unavailable')) {
@@ -184,7 +229,11 @@ export default class PoolSignaling {
         !pair.leaseId || message.leaseId !== pair.leaseId) {
       this.error(socket, 'No matching pool lease'); return;
     }
-    if (message.type === 'disconnect') { this.release(pair, 'Stream disconnected'); return; }
+    if (message.type === 'disconnect') {
+      if (pair.resumeToken) { this.detach(pair); pair.socket.close(4001, 'Reconnect media session'); }
+      else this.release(pair, 'Stream disconnected');
+      return;
+    }
     if (message.type === 'streaming' && session) {
       pair.sender.state = 'busy';
       pair.sender.deadline = undefined;
@@ -229,14 +278,45 @@ export default class PoolSignaling {
     if (this.senders.has(socket) || this.sessions.has(socket) || !validId(message.connectionId) || !validId(message.poolId)) {
       this.error(socket, 'Invalid or duplicate join'); return;
     }
-    if (Array.from(this.sessions.values()).some(session => session.connectionId === message.connectionId)) {
+    if (this.allSessions().some(session => session.connectionId === message.connectionId &&
+        (!message.resumeToken || session.resumeToken !== message.resumeToken))) {
       this.error(socket, 'Connection ID is already used'); return;
+    }
+    if (message.resumeToken !== undefined) {
+      if (typeof message.resumeToken !== 'string' || !/^[a-f0-9]{32}$/.test(message.resumeToken)) {
+        this.error(socket, 'Invalid resume credential'); return;
+      }
+      if (this.ended.has(message.resumeToken)) {
+        this.send(socket, { type: 'ended', reason: 'Session ended by administrator' }); socket.close(1000); return;
+      }
+      const previous = this.resumable.get(message.resumeToken);
+      if (previous && previous.poolId !== message.poolId) { this.error(socket, 'Resume pool does not match'); return; }
+      if (previous?.detachedUntil && previous.detachedUntil <= Date.now()) this.release(previous, 'Receiver resume grace expired');
+      else if (previous) {
+        const oldSocket = previous.socket;
+        this.detach(previous);
+        previous.socket = socket; previous.detachedUntil = undefined;
+        previous.connectionId = message.connectionId;
+        this.sessions.set(socket, previous);
+        this.send(socket, { type: 'session', resumeToken: previous.resumeToken, graceMs: this.options.resumeGraceMs ?? 30000, resumed: true });
+        if (oldSocket !== socket) oldSocket.close(4001, 'Session resumed on another connection');
+        this.record('resumed', previous.connectionId, 'Receiver recovered its session');
+        if (previous.sender) this.attach(previous);
+        else { previous.position = undefined; this.schedule(); }
+        return;
+      }
+      this.send(socket, { type: 'resume-expired' });
     }
     if (this.queue.length >= (this.options.maxQueueLength ?? 1000)) {
       socket.close(1013, 'Pool queue is full'); return;
     }
     const session: Session = { socket, connectionId: message.connectionId, poolId: message.poolId, joinedAt: Date.now() };
+    if (message.resumable === true && (this.options.resumeGraceMs ?? 30000) > 0) {
+      session.resumeToken = id(); this.resumable.set(session.resumeToken, session);
+    }
     this.sessions.set(socket, session);
+    if (message.resumable === true) this.send(socket, { type: 'session', resumeToken: session.resumeToken,
+      graceMs: this.options.resumeGraceMs ?? 30000, resumed: false });
     this.queue.push(session);
     this.record('joined', session.connectionId, 'Receiver joined ' + session.poolId);
     this.schedule();
@@ -245,7 +325,7 @@ export default class PoolSignaling {
   private schedule(): void {
     // Reserving is synchronous: a second join cannot select the same sender.
     for (const session of this.queue.slice()) {
-      if (session.socket.readyState !== WebSocket.OPEN) continue;
+      if (session.detachedUntil || session.socket.readyState !== WebSocket.OPEN) continue;
       const sender = Array.from(this.senders.values()).find(candidate =>
         candidate.poolId === session.poolId && candidate.state === 'idle' && !candidate.draining && candidate.socket.readyState === WebSocket.OPEN);
       if (!sender) continue;
@@ -254,14 +334,9 @@ export default class PoolSignaling {
       sender.deadline = Date.now() + (this.options.assignmentTimeoutMs ?? 30000);
       sender.session = session;
       session.sender = sender;
-      session.leaseId = id();
       session.assignedAt = Date.now();
       this.record('assigned', session.connectionId, 'Assigned to ' + sender.instanceId);
-      const assignment = { type: 'assigned', connectionId: session.connectionId, leaseId: session.leaseId, instanceId: sender.instanceId };
-      this.send(sender.socket, assignment);
-      this.send(session.socket, assignment);
-      // Existing RenderStreaming creates its peer and input channel on connect.
-      this.send(session.socket, { type: 'connect', connectionId: session.connectionId, polite: true });
+      this.attach(session);
     }
     const positions = new Map<string, number>();
     this.queue.forEach(session => {
@@ -284,6 +359,7 @@ export default class PoolSignaling {
   private release(session: Session, reason: string): void {
     this.record('released', session.connectionId, reason);
     this.sessions.delete(session.socket);
+    if (session.resumeToken) this.resumable.delete(session.resumeToken);
     this.queue = this.queue.filter(candidate => candidate !== session);
     const sender = session.sender;
     if (sender) {
@@ -302,11 +378,18 @@ export default class PoolSignaling {
     if (sender) this.record('offline', sender.instanceId, 'Sender disconnected');
     this.senders.delete(socket);
     const session = this.sessions.get(socket) || sender?.session;
-    if (session) this.release(session, sender ? 'Sender offline' : 'Receiver offline');
+    if (session) {
+      if (!sender && session.resumeToken) this.detach(session);
+      else this.release(session, sender ? 'Sender offline' : 'Receiver offline');
+    }
   }
 
   private sweep(): void {
     const now = Date.now();
+    this.resumable.forEach(session => {
+      if (session.detachedUntil && session.detachedUntil <= now) this.release(session, 'Receiver resume grace expired');
+    });
+    this.ended.forEach((expires, token) => { if (expires <= now) this.ended.delete(token); });
     this.senders.forEach(sender => {
       if (!sender.deadline || now < sender.deadline) return;
       if (sender.state === 'reserved' && sender.session) this.release(sender.session, 'Stream startup timed out');
@@ -326,6 +409,7 @@ export default class PoolSignaling {
     clearInterval(this.heartbeat);
     this.senders.clear();
     this.sessions.clear();
+    this.resumable.clear(); this.ended.clear();
     this.drained.clear();
     this.queue = [];
     this.wss.clients.forEach(socket => socket.terminate());

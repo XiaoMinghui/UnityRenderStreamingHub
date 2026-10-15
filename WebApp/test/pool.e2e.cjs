@@ -12,9 +12,9 @@ async function run() {
   const port = reservation.address().port;
   await new Promise(resolve => reservation.close(resolve));
   const base = `http://127.0.0.1:${port}`;
-  const server = spawn(process.execPath, ['build/index.js', '-p', String(port), '-t', 'websocket', '-m', 'public', '--pool', '-l', 'none'], {
+  const server = spawn(process.execPath, ['build/index.js', '-p', String(port), '-t', 'websocket', '-m', 'public', '--pool', '--pool-resume-seconds', '5', '--admin', '-l', 'none'], {
     cwd: path.resolve(__dirname, '..'), windowsHide: true, stdio: 'pipe',
-    env: { ...process.env, RENDERSTREAMING_POOL_TOKEN: 'synthetic-test-token' }
+    env: { ...process.env, RENDERSTREAMING_POOL_TOKEN: 'synthetic-test-token', RENDERSTREAMING_ADMIN_TOKEN: 'synthetic-admin-token' }
   });
   server.stderr.on('data', data => process.stderr.write(data));
   let browser;
@@ -38,13 +38,14 @@ async function run() {
         setInterval(() => { context.fillStyle = color; context.fillRect(0, 0, 640, 360); context.fillStyle = 'white'; context.fillText(String(frame++), 10, 20); }, 40);
         const track = canvas.captureStream(25).getVideoTracks()[0];
         const socket = window.senderSocket = new WebSocket(`${location.origin.replace('http', 'ws')}/pool`);
-        window.inputs = 0; window.assignments = [];
+        window.inputs = 0; window.assignments = []; window.resets = 0;
         let assignment, peer;
         const send = message => socket.send(JSON.stringify({ ...message, leaseId: assignment?.leaseId }));
         socket.onopen = () => send({ type: 'register', instanceId, poolId: 'default', token: 'synthetic-test-token' });
         socket.onmessage = async event => {
           const message = JSON.parse(event.data);
           if (message.type === 'reset') {
+            window.resets++;
             peer?.close(); peer = null; assignment = null;
             send({ type: 'ready', resetId: message.resetId });
             window.ready = true;
@@ -105,6 +106,26 @@ async function run() {
     await r1.mouse.click(400, 200);
     await a.waitForFunction(() => inputs > 5);
     assert.equal(await b.evaluate(() => inputs), beforeB, 'input must stay in the assigned instance');
+    // A socket outage and a full page refresh retain the same app, without reset.
+    const originalResets = await a.evaluate(() => resets);
+    const originalPixel = await pixel(r1);
+    const adminState = async () => (await fetch(`${base}/admin/api/state`, { headers: { Authorization: 'Bearer synthetic-admin-token' } })).json();
+    const originalJoinedAt = (await adminState()).sessions.find(s => s.instanceId === 'sender-a').joinedAt;
+    await r1.context().setOffline(true); await r1.evaluate(() => sockets.at(-1).close());
+    await r1.waitForTimeout(300);
+    assert.equal((await adminState()).sessions.find(s => s.instanceId === 'sender-a').state, 'reconnecting');
+    await r1.context().setOffline(false); await playing(r1);
+    assert.deepEqual(await pixel(r1), originalPixel, 'same sender after outage');
+    assert.equal(await a.evaluate(() => resets), originalResets);
+    const inputAfterRecovery = await a.evaluate(() => inputs); await r1.mouse.click(350, 180);
+    await a.waitForFunction(before => inputs > before, inputAfterRecovery);
+    await r1.reload(); await playing(r1);
+    assert.deepEqual(await pixel(r1), originalPixel, 'same sender after refresh');
+    assert.equal(await a.evaluate(() => resets), originalResets);
+    assert.equal((await adminState()).sessions.find(s => s.instanceId === 'sender-a').joinedAt, originalJoinedAt);
+    const queueJoinedAt = (await adminState()).sessions.find(s => s.state === 'queued').joinedAt;
+    await r3.reload(); await r3.waitForFunction(() => viewer.dataset.state === 'queued');
+    assert.equal((await adminState()).sessions.find(s => s.state === 'queued').joinedAt, queueJoinedAt);
     // Keep the real queue alive beyond the legacy 30-second first-frame deadline.
     await r3.waitForTimeout(31000);
     assert.equal(await r3.evaluate(() => viewer.dataset.state), 'queued');
@@ -113,16 +134,27 @@ async function run() {
     await r3.waitForFunction(() => viewer.dataset.state === 'stopped');
     await r3.locator('#retryButton').click();
     await r3.waitForFunction(() => viewer.dataset.state === 'queued');
+    const assignmentsBeforeRelease = await a.evaluate(() => assignments.length);
     await r1.close();
     await playing(r3);
-    assert.equal(await a.evaluate(() => assignments.length), 2);
+    assert.equal(await a.evaluate(() => assignments.length), assignmentsBeforeRelease + 1);
     assert.equal(await r2.evaluate(() => viewer.dataset.state), 'playing');
-    // Dropped signaling recovers with one new lease and one live browser socket.
+    // Dropped signaling recovers the existing instance and one live browser socket.
+    const socketsBeforeRecovery = await r3.evaluate(() => sockets.length);
+    const resetsBeforeRecovery = await a.evaluate(() => resets);
     await r3.evaluate(() => sockets.at(-1).close());
-    await r3.waitForFunction(() => sockets.length === 3 && viewer.dataset.state === 'playing');
+    await r3.waitForFunction(count => sockets.length === count + 1 && viewer.dataset.state === 'playing', socketsBeforeRecovery);
     assert.equal(await r3.evaluate(() => sockets.filter(socket => socket.readyState === 1).length), 1);
+    assert.equal(await a.evaluate(() => resets), resetsBeforeRecovery);
+    // Outage longer than grace releases capacity and the old tab joins again.
+    await r3.context().setOffline(true); await r3.evaluate(() => sockets.at(-1).close());
+    const r4 = await receiver(); await playing(r4);
+    assert.equal(await a.evaluate(() => resets), resetsBeforeRecovery + 1);
+    await r3.context().setOffline(false); await r3.waitForFunction(() => viewer.dataset.state === 'queued');
+    assert.equal((await adminState()).summary.active, 2);
+    assert.match(await r3.locator('#message').textContent(), /第 1 位/);
     assert.deepEqual(errors, [], 'browser exceptions');
-    console.log('PASS Pool: 2 independent video/input sessions, third-user queue >30s, cancel/rejoin, reset/reassignment, socket recovery.');
+    console.log('PASS Pool: independent video/input, queue >30s, same-instance outage/refresh recovery without reset, preserved queue order, one live socket, grace expiry/reset/reallocation and expired-token requeue.');
   } finally {
     await browser?.close();
     if (server.exitCode === null) { const exited = once(server, 'exit'); server.kill(); await exited; }

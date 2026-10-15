@@ -8,6 +8,8 @@ The optional [management dashboard](WebApp/ADMINISTRATION.md) shows instance sta
 
 The optional [process Agent](Tools/ProcessAgent/README.md) manages configured Unity processes on rendering machines, including startup, stop/restart, bounded crash recovery and process logs through the dashboard.
 
+Pool browser receivers support [short-disconnection recovery](INSTANCE_POOL.md#short-disconnection-recovery): keep the same sender or queue position during a configurable grace window (30 seconds by default), including same-tab page refresh.
+
 ## Requirements
 
 Please see [Requirements](com.unity.renderstreaming/Documentation~/index.md#requirements) section.

@@ -11,9 +11,9 @@ describe('isolated instance pool over real WebSockets', () => {
   let server: Server, signaling: WSSignaling, url: string;
   const clients: Client[] = [];
   const token = 'test-only-sender-token';
-  async function boot(mode = 'public', assignmentTimeoutMs = 30000, resetTimeoutMs = 30000, heartbeatIntervalMs = 20000) {
+  async function boot(mode = 'public', assignmentTimeoutMs = 30000, resetTimeoutMs = 30000, heartbeatIntervalMs = 20000, resumeGraceMs = 30000) {
     server = createServer(createApp({ mode, type: 'websocket', logging: 'none', pool: true }));
-    signaling = new WSSignaling(server, mode, 20000, 3, { senderToken: token, assignmentTimeoutMs, resetTimeoutMs, heartbeatIntervalMs });
+    signaling = new WSSignaling(server, mode, 20000, 3, { senderToken: token, assignmentTimeoutMs, resetTimeoutMs, heartbeatIntervalMs, resumeGraceMs });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     url = `ws://127.0.0.1:${(server.address() as any).port}`;
   }
@@ -50,13 +50,100 @@ describe('isolated instance pool over real WebSockets', () => {
     if (ready) { sender.send({ type: 'ready', resetId: reset.resetId }); await sender.next('ready'); }
     return { ...sender, reset };
   }
-  async function receiver(connectionId: string, poolId = 'default') {
+  async function receiver(connectionId: string, poolId = 'default', resumable = false, resumeToken?: string) {
     const receiver = await client();
-    receiver.send({ type: 'join', connectionId, poolId });
+    receiver.send({ type: 'join', connectionId, poolId, resumable, resumeToken });
     return receiver;
   }
   const signal = (type: string, assignment: any) => ({ type, leaseId: assignment.leaseId,
     data: { connectionId: assignment.connectionId, sdp: 'test-sdp', candidate: 'test-candidate' } });
+
+  test('receiver outage retains the original sender without application reset and rotates media ownership on recovery', async () => {
+    await boot(); const s = await sender('same-instance');
+    const r = await receiver('original', 'default', true), credential = await r.next('session'), original = await r.next('assigned');
+    r.send({ type: 'streaming', connectionId: 'original', leaseId: original.leaseId });
+    r.socket.terminate(); await s.next('disconnect');
+    const waiting = await receiver('waiting'); await waiting.next('queued');
+    expect(signaling.pool.snapshot().sessions.find(s => s.connectionId === 'original')).toMatchObject({ state: 'reconnecting', instanceId: 'same-instance' });
+    expect(s.messages.some(m => m.type === 'reset')).toBe(false);
+    const restored = await receiver('new-media-id', 'default', true, credential.resumeToken);
+    expect((await restored.next('session')).resumed).toBe(true);
+    const resumed = await restored.next('assigned'); expect(resumed.instanceId).toBe(original.instanceId);
+    expect(resumed.leaseId).not.toBe(original.leaseId); await s.next('assigned');
+    s.send(signal('offer', original)); await s.next('error');
+    restored.send(signal('offer', resumed)); expect((await s.next('offer')).data.sdp).toBe('test-sdp');
+    const snapshot = JSON.stringify(signaling.pool.snapshot()); expect(snapshot).not.toContain(credential.resumeToken);
+    expect(snapshot).not.toContain(resumed.leaseId);
+    expect(s.messages.some(m => m.type === 'reset')).toBe(false);
+    restored.send({ type: 'leave' }); await s.next('reset');
+    expect(signaling.pool.snapshot().sessions).toHaveLength(1);
+  });
+
+  test('queue recovery retains FIFO position, enforces pool ownership and supports an authorized live-socket takeover', async () => {
+    await boot();
+    const a = await receiver('a', 'default', true), credential = await a.next('session'); await a.next('queued');
+    const b = await receiver('b'); expect((await b.next('queued')).position).toBe(2);
+    a.socket.terminate(); await wait(20);
+    const wrongPool = await receiver('wrong', 'other', true, credential.resumeToken); await wrongPool.next('error');
+    const resumed = await receiver('resumed', 'default', true, credential.resumeToken);
+    expect((await resumed.next('session')).resumed).toBe(true);
+    expect((await resumed.next('queued')).position).toBe(1);
+    const replacement = await receiver('replacement', 'default', true, credential.resumeToken);
+    expect((await replacement.next('session')).resumed).toBe(true);
+    expect((await replacement.next('queued')).position).toBe(1);
+    await wait(20); expect(resumed.socket.readyState).toBe(WebSocket.CLOSED);
+    expect(signaling.pool.snapshot().sessions).toHaveLength(2);
+    await sender('available'); expect((await replacement.next('assigned')).instanceId).toBe('available');
+    expect(b.messages.some(m => m.type === 'assigned')).toBe(false);
+  });
+
+  test('resume grace expiry releases exactly once and requires reset before another user can take capacity', async () => {
+    await boot('public', 30000, 30000, 20000, 80);
+    const s = await sender('one');
+    const r = await receiver('r', 'default', true), credential = await r.next('session'); await r.next('assigned');
+    r.socket.terminate(); await s.next('disconnect');
+    const waiting = await receiver('waiting'); await waiting.next('queued');
+    const reset = await s.next('reset');
+    expect(signaling.pool.snapshot().sessions).toHaveLength(1);
+    s.send({ type: 'ready', resetId: reset.resetId }); expect((await waiting.next('assigned')).instanceId).toBe('one');
+    const expired = await receiver('after-expiry', 'default', true, credential.resumeToken);
+    await expired.next('resume-expired'); expect((await expired.next('session')).resumed).toBe(false); await expired.next('queued');
+    expect(s.messages.filter(m => m.type === 'reset')).toHaveLength(0);
+  });
+
+  test('administrative termination revokes detached recovery; sender failure invalidates the old session', async () => {
+    await boot(); const s = await sender('one');
+    const r = await receiver('r', 'default', true), credential = await r.next('session'); await r.next('assigned');
+    r.socket.terminate(); await s.next('disconnect');
+    expect(signaling.pool.endSession('r')).toBe(true); const reset = await s.next('reset');
+    const denied = await receiver('denied', 'default', true, credential.resumeToken); await denied.next('ended');
+    expect(signaling.pool.snapshot().sessions).toHaveLength(0);
+    s.send({ type: 'ready', resetId: reset.resetId }); await s.next('ready');
+    const next = await receiver('next', 'default', true), nextCredential = await next.next('session'); await next.next('assigned');
+    s.socket.terminate(); await next.next('disconnect');
+    const afterFailure = await receiver('retry', 'default', true, nextCredential.resumeToken);
+    await afterFailure.next('resume-expired'); expect((await afterFailure.next('session')).resumed).toBe(false);
+  });
+
+  test('media disconnect can suspend a recoverable lease; explicit leave and disabled recovery preserve release behavior', async () => {
+    await boot(); const s = await sender('one');
+    const r = await receiver('r', 'default', true), credential = await r.next('session'), assignment = await r.next('assigned');
+    s.send({ type: 'disconnect', connectionId: 'r', leaseId: assignment.leaseId }); await s.next('disconnect');
+    expect(signaling.pool.snapshot().sessions[0].state).toBe('reconnecting');
+    const recovered = await receiver('recovered', 'default', true, credential.resumeToken); await recovered.next('assigned');
+    recovered.send({ type: 'leave' }); await s.next('reset');
+    expect(signaling.pool.snapshot().sessions).toHaveLength(0);
+  });
+
+  test('zero grace disables new credentials and malformed or guessed credentials cannot take over a session', async () => {
+    await boot('public', 30000, 30000, 20000, 0);
+    const s = await sender('one'); const r = await receiver('r', 'default', true);
+    expect((await r.next('session')).resumeToken).toBeUndefined(); await r.next('assigned');
+    r.socket.terminate(); await s.next('reset'); expect(signaling.pool.snapshot().sessions).toHaveLength(0);
+    const bad = await receiver('bad', 'default', true, 'invalid'); await bad.next('error');
+    const guessed = await receiver('guess', 'default', true, 'a'.repeat(32)); await guessed.next('resume-expired'); await guessed.next('queued');
+    const duplicate = await receiver('guess'); await duplicate.next('error');
+  });
 
   test.each(['public', 'private'])('legacy %s protocol and /config remain available when the pool is enabled', async mode => {
     await boot(mode);
@@ -177,7 +264,7 @@ describe('isolated instance pool over real WebSockets', () => {
   test('pool heartbeat removes a half-open queued client and advances responsive users', async () => {
     await boot('public', 30000, 30000, 20);
     const stale = await client();
-    stale.socket.pong = () => {};
+    stale.socket.pong = () => { /* Simulate a peer that never responds. */ };
     const closed = new Promise<void>(resolve => stale.socket.once('close', () => resolve()));
     stale.send({ type: 'join', connectionId: 'stale', poolId: 'default' });
     await stale.next('queued');
