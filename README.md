@@ -39,26 +39,6 @@ Please see [Requirements](com.unity.renderstreaming/Documentation~/index.md#requ
 └── WebApp                                 // Web application for signaling
 ```
 
-## Roadmap
-
-| Version | Focus | When |
-| ------- | ----- | ----- |
-| `1.0.0-preview` | - First release | Aug 2019 |
-| `1.1.0-preview` | - Upgrade HDRP version 5.16 | Sep 2019 |
-| `1.2.0-preview` | - *Unity 2019.3* support | Feb 2020 |
-| `2.0.0-preview` | - Multi camera <br/>- DirectX12 (DXR) Support | Apr 2020 |
-| `2.1.0-preview` | - *Unity 2019.4* support <br/>- Add bitrate control sample | Aug 2020 |
-| `2.2.0-preview` | - Add video receiver <br/>- HDRP/URP on Linux support | Nov 2020 |
-| `3.0.0-preview` | - iOS platform support <br/>- AR Foundation sample | Mar 2021 |
-| `3.1.0-exp.1` | - Android platform support | Jun 2021 |
-| `3.1.0-exp.2` | - Audio Renderer support <br/> - Multiplay sample <br/> - M1 Mac support | Dec 2021 |
-| `3.1.0-exp.3` | - Fix bugs | Feb 2022 |
-| `3.1.0-exp.4` | - Streaming settings API <br/> - *Unity 2022.1* support <br/> - Remove *Unity 2019.4* from support list | Oct 2022 |
-| `3.1.0-exp.5` | - Fix bugs | Jan 2023 |
-| `3.1.0-exp.6` | - Streaming Settings Window <br/> - Auto Configuration <br/> - Command line option | Feb 2023 |
-| `3.1.0-exp.7` | - Fix bugs | Jul 2023 |
-| `3.1.0-exp.8` | - Fix bugs | Nov 2023 |
-
 ## FAQ
 
 Please read [this page](com.unity.renderstreaming/Documentation~/faq.md) and [Unity Forum](https://forum.unity.com/forums/unity-render-streaming.413/).
