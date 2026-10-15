@@ -47,6 +47,8 @@ Useful API: `StartSending()`, `StopSending()`, `CompleteReset(string)`, `ResetRe
 
 ## Open receivers
 
+For authenticated status and operational controls, see the optional [management dashboard](WebApp/ADMINISTRATION.md). Enable it separately with `-Admin` / `--admin`; sender registration credentials do not grant management access.
+
 Visit `/pool/index.html`, or `/pool/index.html?pool=your-content-group`. Receivers join automatically, display queue position, support cancel/rejoin, and begin playback when allocated. One idle sender serves one receiver; two independent users require two independent sender instances.
 
 Queue waiting has no video deadline. After assignment, normal decoded-frame monitoring, autoplay recovery, input and fullscreen behavior apply. Decoded, playing video confirms the reservation as an active session.

@@ -8,4 +8,6 @@ export default interface Options {
   logging?: string;
   pool?: boolean;
   poolToken?: string;
+  admin?: boolean;
+  adminToken?: string;
 }

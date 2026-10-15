@@ -13,6 +13,8 @@ export class PoolSignaling extends WebSocketSignaling {
         this.dispatchEvent(new CustomEvent('assigned', { detail: message }));
       } else if (message.type === 'queued') {
         this.dispatchEvent(new CustomEvent('queued', { detail: message }));
+      } else if (message.type === 'ended') {
+        this.dispatchEvent(new CustomEvent('ended', { detail: message }));
       }
     });
   }

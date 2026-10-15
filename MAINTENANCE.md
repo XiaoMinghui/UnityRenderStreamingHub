@@ -130,6 +130,8 @@ Native receiver validation used two Unity 2022.3 editors with a real 1280x720 st
 
 ## Optional instance pool (2026-10-15)
 
+The optional [management dashboard](WebApp/ADMINISTRATION.md) is enabled separately with `Tools/Start-PoolServer.ps1 -Admin` and `RENDERSTREAMING_ADMIN_TOKEN`. It preserves legacy signaling and receiver behavior. Management validation covers authenticated snapshots/actions, drain/resume, exact reset tickets, administrative termination, queue advancement and bounded events; `npm run test:admin` exercises the dashboard in Chrome.
+
 See [instance pool setup, protocol and boundaries](INSTANCE_POOL.md). Enable it using `Tools/Start-PoolServer.ps1` with `RENDERSTREAMING_POOL_TOKEN` configured; the existing launcher stays unchanged. The additional `/pool` endpoint isolates sender registrations and leased sessions from legacy Public/Private signaling. The browser pool receiver lives at `/pool/index.html`. Existing projects remain on their current package source until explicitly migrated.
 
 Validation includes the TypeScript build and server regression suite, legacy receiver Chrome regression, and Chrome pool regression with two synthetic senders and three receivers (distinct decoded video, isolated input, waiting beyond 30 seconds, cancellation, reset/reassignment and socket recovery). The independent browser unit suites also pass (69 tests; the upstream `signaling.test.js` suite requires packaged server binaries and is excluded from that unit run; equivalent source-server routing is exercised by server and Chrome tests).

@@ -24,6 +24,7 @@ export class RenderStreaming {
           .option('-m, --mode <type>', 'Choose Communication mode public or private.', process.env.MODE || 'public')
           .option('-l, --logging <type>', 'Choose http logging type combined, dev, short, tiny or none.', process.env.LOGGING || 'dev')
           .option('--pool', 'Enable the additional /pool WebSocket endpoint.', false)
+          .option('--admin', 'Enable the authenticated management API and dashboard.', false)
           .parse(argv);
         const option = program.opts();
         return {
@@ -36,6 +37,8 @@ export class RenderStreaming {
           logging: option.logging,
           pool: option.pool,
           poolToken: process.env.RENDERSTREAMING_POOL_TOKEN,
+          admin: option.admin,
+          adminToken: process.env.RENDERSTREAMING_ADMIN_TOKEN,
         };
       }
     };
@@ -86,8 +89,9 @@ export class RenderStreaming {
       console.log(`Use websocket for signaling server ws://${this.getIPAddress()[0]}`);
 
       //Start Websocket Signaling server
-      new WSSignaling(this.server, this.options.mode, 20000, 3,
+      const signaling = new WSSignaling(this.server, this.options.mode, 20000, 3,
         options.pool ? { senderToken: options.poolToken } : undefined);
+      this.app.locals.pool = signaling.pool;
     }
 
     console.log(`start as ${this.options.mode} mode`);

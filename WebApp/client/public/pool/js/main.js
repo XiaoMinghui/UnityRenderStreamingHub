@@ -9,7 +9,7 @@ const retry = document.getElementById('retryButton');
 const resume = document.getElementById('resumePlayback');
 const cancel = document.getElementById('cancelButton');
 const titles = { connecting: '正在连接', queued: '等待空闲实例', waiting: '等待推流端画面', buffering: '正在加载画面',
-  playing: '正在串流', retrying: '连接中断，正在重试', blocked: '等待播放许可', error: '暂时无法连接', stopped: '已取消排队' };
+  playing: '正在串流', retrying: '连接中断，正在重试', blocked: '等待播放许可', error: '暂时无法连接', stopped: '会话已停止' };
 const stages = { connecting: 20, waiting: 45, buffering: 80, playing: 100, retrying: 15 };
 let session, setupTimer, controller, generation = 0, active = true;
 function showState(state, text) {

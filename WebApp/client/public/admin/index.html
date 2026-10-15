@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unity Render Streaming · 管理中心</title>
+  <link rel="icon" href="../images/favicon.ico">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside>
+    <a class="brand" href="./"><span class="brand-icon">RS</span><span>Render Streaming<small>管理中心</small></span></a>
+    <nav aria-label="管理导航"><a href="#overview">运行概览</a><a href="#instances">实例</a><a href="#sessions">会话与队列</a><a href="#events">近期事件</a></nav>
+    <div class="aside-note">UNITY RENDER STREAMING<br>实例池管理</div>
+  </aside>
+  <main>
+    <header><div><div class="eyebrow">UNITY RENDER STREAMING</div><h1>运行概览</h1><p>查看实例容量，管理当前会话与等待队列。</p></div><div class="header-actions"><span id="connection">未连接</span><button id="refresh" hidden>刷新</button><button id="logout" hidden>退出</button></div></header>
+    <section id="login" class="panel login-panel">
+      <div class="eyebrow">管理员访问</div><h2>连接管理中心</h2><p>输入此服务器的管理凭证。凭证仅在当前页面内存中保留。</p>
+      <form id="loginForm"><label for="credential">管理凭证</label><div class="login-row"><input id="credential" type="password" autocomplete="off" required placeholder="输入管理凭证"><button class="primary" type="submit">连接</button></div></form>
+    </section>
+    <p id="notice" role="status" aria-live="polite" hidden></p>
+    <div id="dashboard" hidden>
+      <section id="overview" class="metrics" aria-label="实例池概况"></section>
+      <section id="instances" class="panel"><div class="section-heading"><div><h2>实例</h2><p>停止接单不影响当前会话；重新准备会结束当前会话。</p></div><label>内容池 <select id="poolFilter"><option value="">全部内容池</option></select></label></div><div class="table-scroll"><table><thead><tr><th>实例 / 内容池</th><th>状态</th><th>当前会话</th><th>在线时长</th><th>操作</th></tr></thead><tbody id="instanceRows"></tbody></table></div></section>
+      <section id="sessions" class="panel"><div class="section-heading"><div><h2>会话与队列</h2><p>连接成功后，以接收端确认解码播放作为串流开始的标志。</p></div></div><div class="table-scroll"><table><thead><tr><th>会话 / 内容池</th><th>状态</th><th>分配实例</th><th>等待 / 使用时长</th><th>操作</th></tr></thead><tbody id="sessionRows"></tbody></table></div></section>
+      <section id="events" class="panel"><div class="section-heading"><div><h2>近期事件</h2><p>展示本次服务器运行期间最近的 100 条事件。</p></div><span id="updated" class="muted"></span></div><ul id="eventRows" class="event-list"></ul></section>
+    </div>
+    <footer>Unity Render Streaming · 管理操作只作用于实例池</footer>
+  </main>
+  <dialog id="confirmDialog"><form method="dialog"><h2>确认操作</h2><p id="confirmText"></p><div class="dialog-actions"><button value="cancel">取消</button><button class="danger" value="confirm">确认</button></div></form></dialog>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

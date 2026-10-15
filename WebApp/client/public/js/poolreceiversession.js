@@ -16,6 +16,11 @@ export class PoolReceiverSession extends ReceiverSession {
 
   _createSignaling() {
     const signaling = this.poolSignaling = new PoolSignaling(this.options.poolId || 'default');
+    signaling.addEventListener('ended', () => {
+      if (this.poolSignaling !== signaling || !this.active) return;
+      this.stop();
+      this.onState('stopped', '管理员已结束本次会话，可以手动重新加入');
+    });
     signaling.addEventListener('queued', ({ detail }) => {
       if (this.poolSignaling !== signaling || !this.active) return;
       this.onState('queued', `暂无空闲的 Unity sender，当前排队第 ${detail.position} 位`);

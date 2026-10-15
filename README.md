@@ -4,6 +4,8 @@ This repository starts from a source snapshot of the maintained Unity Render Str
 
 See [Maintenance and shared package setup](MAINTENANCE.md) for setup and validation. The optional [instance pool](INSTANCE_POOL.md) adds exclusive sender allocation and receiver queues through a separate endpoint. Existing Public/Private connections and `/receiver/index.html` keep their existing behavior; the pool is disabled by default. Device and business integrations remain in consuming projects.
 
+The optional [management dashboard](WebApp/ADMINISTRATION.md) shows instance status, sessions, queues and recent events, with authenticated controls for allocation and preparation.
+
 ## Requirements
 
 Please see [Requirements](com.unity.renderstreaming/Documentation~/index.md#requirements) section.
