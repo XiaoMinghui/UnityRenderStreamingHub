@@ -12,18 +12,12 @@ Please see [Requirements](com.unity.renderstreaming/Documentation~/index.md#requ
 
 - `com.unity.renderstreaming` -  [LICENSE.md](com.unity.renderstreaming/LICENSE.md)
 
-- `com.unity.template.renderstreaming-hd` -  [LICENSE.md](com.unity.template.renderstreaming-hd/Packages/com.unity.template.renderstreaming-hd/LICENSE.md)
-
-- `com.unity.template.renderstreaming-rtx` -  [LICENSE.md](com.unity.template.renderstreaming-rtx/Packages/com.unity.template.renderstreaming-rtx/LICENSE.md)
-
 ## Repository Structure
 
 ```
 <root>
-├── BuildScripts~                          // Build scripts for CI system
-├── com.unity.renderstreaming              // Unity Render Streaming Package
-├── com.unity.template.renderstreaming-hd  // HDRP template
-├── com.unity.template.renderstreaming-rtx // HDRP Raytracing template
-├── RenderStreaming~                       // Sample project for package
-└── WebApp                                 // Web application for signaling
+├── com.unity.renderstreaming // Unity package, package samples and tests
+├── WebApp                   // Signaling server, browser clients and tests
+├── Tools                    // Package setup, server launch, packaging and test scripts
+└── TestProjects             // Unity projects for package validation
 ```

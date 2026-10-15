@@ -343,7 +343,6 @@ MigrationBackup/
 
 # Exclude folder
 !Documentation~
-!BuildScripts~
 !Samples~
 
 # Exclude webrtc source

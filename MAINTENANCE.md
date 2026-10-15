@@ -64,6 +64,16 @@ Changing `WebApp/` does not update an already deployed `webserver.exe`. Install 
 
 Run `powershell -ExecutionPolicy Bypass -File Tools/Start-Server.ps1 -Port 8080` with Node.js 22 and npm installed. The launcher installs locked dependencies when missing, builds TypeScript, then serves this checkout's browser files in WebSocket/public mode. Application projects can delegate their launchers here. Previously distributed `webserver.exe` binaries need rebuilding before they include source changes.
 
+Packaging and test wrappers are in `Tools/`. They resolve the WebApp directory relative to their own location, so they can be invoked from another working directory:
+
+| Task | Windows | macOS / Linux |
+| --- | --- | --- |
+| Package a standalone server | `Tools/pack_webapp.cmd` | `Tools/pack_webapp.sh` |
+| Server lint, unit tests and HTTP API tests | `Tools/test_webapp.cmd` | `Tools/test_webapp.sh` |
+| Browser lint and tests | `Tools/test_webapp_client.cmd` | `Tools/test_webapp_client.sh` |
+
+These wrappers retain their existing workflows. Standalone packaging still uses the upstream `pkg` configuration targeting Node 10; it has not been updated or validated for the Node 22 source-server workflow. The full browser wrapper includes the upstream signaling suite, which expects packaged server binaries. Source-server build and regression commands are documented below.
+
 ## Updating the source
 
 ```powershell
@@ -75,7 +85,7 @@ git push origin main
 
 Review upstream source updates separately and apply selected changes deliberately, preserving required attribution and notices. Do not merge upstream ancestry into this repository's independent history. Upstream `main` may have changed dependencies or APIs compared with this pinned 3.1 baseline.
 
-The initial local checkout uses Git sparse checkout for the package, WebApp, Tools and root documentation. The complete source snapshot is available remotely. Use `git sparse-checkout disable` if the other upstream sample projects or templates are needed.
+The local checkout may use Git sparse checkout for the package, WebApp, Tools and root documentation. Use `git sparse-checkout add TestProjects` to check out the retained Unity test projects, or `git sparse-checkout disable` to check out all retained files. Upstream Yamato CI, its build helpers, the standalone sample project and the HDRP/ray-tracing project templates have been removed. Package samples under `com.unity.renderstreaming/Samples~` and package tests remain available.
 
 Upstream licenses and notices remain in this repository and in the Unity package.
 
